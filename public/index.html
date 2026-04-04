@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eleição de Oficiais da Igreja</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg,#f0ede6);color:var(--tx,#1a1a18);min-height:100vh}
+input,select,textarea,button{font-family:inherit}
+button{cursor:pointer}
+
+/* Layout */
+.page{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.wrap{width:100%;max-width:360px}
+.container{width:100%;max-width:740px;margin:0 auto;padding:16px}
+
+/* Cards */
+.card{background:#fff;border:1px solid #ddd;border-radius:14px;padding:18px;margin-bottom:12px}
+.card-sm{background:#fff;border:1px solid #eee;border-radius:10px;padding:10px 14px}
+
+/* Forms */
+.field{margin-bottom:12px}
+.field label,.flabel{font-size:12px;color:#666;display:block;margin-bottom:4px;font-weight:600}
+.input{width:100%;padding:9px 12px;border-radius:8px;border:1px solid #ccc;background:#fff;color:#1a1a18;font-size:14px;outline:none;transition:border-color .15s}
+.input:focus{border-color:var(--p,#185FA5);box-shadow:0 0 0 3px rgba(24,95,165,.07)}
+select.input{cursor:pointer}
+textarea.input{resize:vertical}
+.cpf-ok{border-color:#3B6D11!important}
+.cpf-err{border-color:#a32d2d!important}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;border:1px solid #ccc;background:#f5f5f5;color:#333;transition:all .15s;white-space:nowrap;text-decoration:none}
+.btn:hover{filter:brightness(.95)}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
+.btn-full{width:100%;padding:10px}
+.btn-p{background:var(--pbg,#e6f1fb);color:var(--p,#185FA5);border-color:var(--p,#185FA5)}
+.btn-s{background:var(--sbg,#eaf3de);color:var(--s,#3B6D11);border-color:var(--s,#3B6D11)}
+.btn-danger{background:#fcebeb;color:#a32d2d;border-color:#a32d2d}
+.btn-warn{background:#faeeda;color:#854F0B;border-color:#854F0B}
+.btn-sm{padding:4px 9px;font-size:12px}
+
+/* Badges */
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:6px}
+.bdg-info{background:var(--pbg,#e6f1fb);color:var(--p,#185FA5)}
+.bdg-ok{background:#eaf3de;color:#3B6D11}
+.bdg-err{background:#fcebeb;color:#a32d2d}
+.bdg-warn{background:#faeeda;color:#854F0B}
+.bdg-gray{background:#eee;color:#666}
+
+/* Alerts */
+.divider{height:1px;background:#eee;margin:14px 0}
+.err-box{background:#fcebeb;color:#a32d2d;font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:10px}
+.info-box{background:var(--pbg,#e6f1fb);color:var(--p,#185FA5);font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:10px}
+.warn-box{background:#faeeda;color:#854F0B;font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:10px}
+.succ-box{background:#eaf3de;color:#3B6D11;font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:10px}
+
+/* Tabs */
+.tabs{background:#fff;border-bottom:1px solid #ddd;display:flex;overflow-x:auto;padding:0 8px}
+.tabs::-webkit-scrollbar{height:0}
+.tab-btn{padding:10px 12px;font-size:13px;background:transparent;border:none;border-bottom:2px solid transparent;color:#888;font-weight:400;white-space:nowrap;cursor:pointer;transition:all .15s}
+.tab-btn.active{color:var(--p,#185FA5);font-weight:700;border-bottom-color:var(--p,#185FA5)}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999;white-space:nowrap;animation:tIn .25s ease;pointer-events:none}
+@keyframes tIn{from{opacity:0;transform:translateX(-50%) translateY(12px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:1000}
+
+/* Topbar */
+.topbar{background:#fff;border-bottom:1px solid #ddd;padding:10px 16px;display:flex;align-items:center;gap:8px;position:sticky;top:0;z-index:100}
+
+/* Grid */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+/* Stat card */
+.stat-card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px 14px}
+.stat-card .lbl{font-size:11px;color:#888;margin-bottom:2px}
+.stat-card .val{font-size:26px;font-weight:700}
+
+/* Avatar */
+.av-em{border-radius:50%;background:#f0ede6;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.av-img{border-radius:50%;object-fit:cover;border:1px solid #e0ddd6;flex-shrink:0}
+
+/* Presença */
+.pres-item{display:flex;align-items:center;gap:10px;border-radius:10px;padding:9px 13px;margin-bottom:6px;cursor:pointer;transition:all .15s;border:1px solid #ddd;background:#fff}
+.pres-item.p{background:#eaf3de;border-color:#3B6D11}
+.pres-item.v{cursor:default}
+
+/* Spinner */
+.spinner{width:24px;height:24px;border:3px solid #e0ddd6;border-top-color:var(--p,#185FA5);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app"><div class="page"><div class="spinner"></div></div></div>
+
+<script>
+// ─── Sessão ──────────────────────────────────────────────────────────────────
+// Token e role guardados em sessionStorage (limpos ao fechar a aba)
+function getToken() { return sessionStorage.getItem('adminToken') || ''; }
+function getRole()  { return sessionStorage.getItem('adminRole')  || ''; }
+function saveSession(token, role) {
+  sessionStorage.setItem('adminToken', token);
+  sessionStorage.setItem('adminRole',  role);
+}
+function clearSession() {
+  sessionStorage.removeItem('adminToken');
+  sessionStorage.removeItem('adminRole');
+}
+
+// ─── API ──────────────────────────────────────────────────────────────────────
+function authH()  { return { 'X-Admin-Token': getToken() }; }
+function authJ()  { return { 'Content-Type': 'application/json', 'X-Admin-Token': getToken() }; }
+
+const api = {
+  get:    async p         => (await fetch(p, { headers: authH() })).json(),
+  post:   async (p, d)    => (await fetch(p, { method:'POST',   headers: authJ(), body: JSON.stringify(d) })).json(),
+  patch:  async (p, d)    => (await fetch(p, { method:'PATCH',  headers: authJ(), body: JSON.stringify(d) })).json(),
+  del:    async p          => (await fetch(p, { method:'DELETE', headers: authH() })).json(),
+  postTxt:async (p, t)    => (await fetch(p, { method:'POST',   headers: authJ(), body: JSON.stringify({ csv: t }) })).json(),
+  upload: async (p, k, f) => {
+    const fd = new FormData(); fd.append(k, f);
+    return (await fetch(p, { method:'POST', headers: authH(), body: fd })).json();
+  },
+};
+
+// ─── Estado UI ────────────────────────────────────────────────────────────────
+let S = {
+  tab: 'usuarios',
+  users: [], candidatos: [], cargos: [], presentes: [], jaVotou: [], elStatus: 'aguardando', config: {},
+};
+let _pollTimer = null;
+
+// ─── Utilitários ─────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const fmtCPF = v => v.replace(/\D/g,'').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4').slice(0,14);
+
+function validCPF(cpf) {
+  cpf = cpf.replace(/\D/g,'');
+  if (cpf.length!==11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  let s=0; for(let i=0;i<9;i++) s+=+cpf[i]*(10-i);
+  let r=(s*10)%11; if(r>=10)r=0; if(r!==+cpf[9]) return false;
+  s=0; for(let i=0;i<10;i++) s+=+cpf[i]*(11-i);
+  r=(s*10)%11; if(r>=10)r=0; return r===+cpf[10];
+}
+
+let _tTimer = null;
+function toast(msg, type='info') {
+  document.querySelector('.toast')?.remove();
+  if (_tTimer) clearTimeout(_tTimer);
+  const el = document.createElement('div');
+  el.className = 'toast';
+  const st = { info:'background:var(--pbg);color:var(--p);border:1px solid var(--p)', success:'background:#eaf3de;color:#3B6D11;border:1px solid #3B6D11', warn:'background:#faeeda;color:#854F0B;border:1px solid #854F0B', danger:'background:#fcebeb;color:#a32d2d;border:1px solid #a32d2d' };
+  el.style.cssText = st[type]||st.info; el.textContent = msg; document.body.appendChild(el);
+  _tTimer = setTimeout(() => el.remove(), 3200);
+}
+
+function applyTheme(c) {
+  if (!c) return;
+  const p = c.corPrimaria||'#185FA5', s = c.corSecundaria||'#3B6D11';
+  const hexBg = h => { try { const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16); return `rgba(${r},${g},${b},.1)`; } catch { return 'rgba(24,95,165,.1)'; } };
+  document.documentElement.style.setProperty('--p', p);
+  document.documentElement.style.setProperty('--s', s);
+  document.documentElement.style.setProperty('--pbg', hexBg(p));
+  document.documentElement.style.setProperty('--sbg', hexBg(s));
+  document.documentElement.style.setProperty('--bg', c.corFundo||'#f0ede6');
+  document.documentElement.style.setProperty('--tx', c.corTexto||'#1a1a18');
+  document.body.style.background = c.corFundo||'#f0ede6';
+}
+
+// Gera HTML de avatar (foto ou emoji)
+function avHTML(c, sz) {
+  if (!c) return '';
+  const fsz = Math.round(sz*.45);
+  if (c.fotoUrl)
+    return `<img src="${esc(c.fotoUrl)}" class="av-img" width="${sz}" height="${sz}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <div class="av-em" style="width:${sz}px;height:${sz}px;font-size:${fsz}px;display:none">${esc(c.emoji||'😊')}</div>`;
+  return `<div class="av-em" style="width:${sz}px;height:${sz}px;font-size:${fsz}px">${esc(c.emoji||'😊')}</div>`;
+}
+
+async function loadState() {
+  const d = await api.get('/api/state');
+  S.users=d.users||[]; S.candidatos=d.candidatos||[]; S.cargos=d.cargos||[];
+  S.presentes=d.presentes||[]; S.jaVotou=d.jaVotou||[]; S.elStatus=d.elStatus||'aguardando'; S.config=d.config||{};
+  applyTheme(S.config);
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+(async () => {
+  await loadState();
+  // Tenta restaurar sessão admin do sessionStorage
+  const saved = getToken();
+  if (saved) {
+    const chk = await api.get('/api/auth/check');
+    if (chk.valid) { renderAdmin(); return; }
+    clearSession();
+  }
+  renderLogin();
+})();
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
+function renderLogin() {
+  const cfg = S.config;
+  const badge = S.elStatus==='ativa'?'<span class="badge bdg-ok">Eleição em andamento</span>':S.elStatus==='encerrada'?'<span class="badge bdg-warn">Eleição encerrada</span>':'<span class="badge bdg-gray">Aguardando</span>';
+  $('app').innerHTML = `
+  <div class="page"><div class="wrap">
+    <div style="text-align:center;margin-bottom:22px">
+      ${cfg.logoUrl?`<img src="${esc(cfg.logoUrl)}" style="max-height:60px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto">`:'<div style="font-size:52px;margin-bottom:10px">🗳️</div>'}
+      <h1 style="font-size:21px;font-weight:700">${esc(cfg.nomeInstituicao||'Eleição de Oficiais da Igreja')}</h1>
+      <p style="font-size:13px;color:#888;margin-top:5px">Painel Administrativo</p>
+    </div>
+    <div class="card">
+      <div class="field"><label>Usuário <span style="color:#aaa;font-weight:400">(CPF ou <strong>admin</strong>)</span></label>
+        <input id="l-cpf" class="input" placeholder="admin" autocomplete="off" spellcheck="false"></div>
+      <div class="field"><label>Senha</label><input id="l-pwd" class="input" type="password" placeholder="••••••"></div>
+      <div id="l-err" style="display:none" class="err-box"></div>
+      <button class="btn btn-p btn-full" onclick="doLogin()">Entrar no painel</button>
+      <div style="margin-top:12px;padding:10px;background:var(--bg,#f0ede6);border-radius:8px;font-size:11px;color:#888;line-height:1.8">
+        <strong>Admin:</strong> <code>admin</code> / <code>admin</code><br>
+        <a href="/votar"   style="color:var(--p)" target="_blank">🗳️ Página de votação</a> &nbsp;·&nbsp;
+        <a href="/checkin" style="color:var(--p)" target="_blank">📷 Check-in</a> &nbsp;·&nbsp;
+        <a href="/datashow" style="color:var(--p)" target="_blank">📺 Datashow</a>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:10px">${badge}</div>
+  </div></div>`;
+  const lc = $('l-cpf');
+  if (lc) {
+    lc.addEventListener('input', e => { if (!/^[a-zA-Z]/.test(e.target.value)) e.target.value = fmtCPF(e.target.value); });
+    lc.addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
+  }
+  const lp = $('l-pwd');
+  if (lp) lp.addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
+}
+
+async function doLogin() {
+  const cpf = ($('l-cpf').value||'').trim(), pwd = $('l-pwd').value;
+  const errEl = $('l-err'); errEl.style.display='none';
+  if (!cpf) { errEl.textContent='Digite o usuário.'; errEl.style.display='block'; return; }
+  const res = await api.post('/api/login', { cpf, pwd });
+  if (res.error) { errEl.textContent=res.error; errEl.style.display='block'; return; }
+  // Salva token e role na sessão do browser
+  saveSession(res.token, res.role);
+  await loadState();
+  renderAdmin();
+}
+
+// ─── ADMIN SHELL ──────────────────────────────────────────────────────────────
+function renderAdmin() {
+  const st = S.elStatus;
+  const sb = st==='ativa'?'<span class="badge bdg-ok">Ativa</span>':st==='encerrada'?'<span class="badge bdg-warn">Encerrada</span>':'<span class="badge bdg-gray">Aguardando</span>';
+  const tabs = [['usuarios','Usuários'],['presenca','Presença'],['candidatos','Candidatos'],['cargos','Cargos'],['eleicao','Eleição'],['resultados','Resultados'],['configuracoes','Configurações']];
+  const th = tabs.map(([id,lbl]) => `<button class="tab-btn ${S.tab===id?'active':''}" onclick="setTab('${id}')">${lbl}</button>`).join('');
+  $('app').innerHTML = `
+  <div style="min-height:100vh;background:var(--bg,#f0ede6)">
+    <div class="topbar">
+      ${S.config.logoUrl?`<img src="${esc(S.config.logoUrl)}" style="height:26px">`:'<span style="font-size:18px">🗳️</span>'}
+      <span style="font-weight:700;font-size:14px">${esc(S.config.nomeInstituicao||'Eleição de Oficiais da Igreja')}</span>
+      ${sb}
+      <div style="display:flex;gap:6px;margin-left:auto">
+        <a class="btn btn-sm btn-p" href="/votar"    target="_blank">🗳️</a>
+        <a class="btn btn-sm"       href="/datashow" target="_blank">📺</a>
+        <button class="btn btn-sm"  onclick="doLogout()">Sair</button>
+      </div>
+    </div>
+    <div class="tabs">${th}</div>
+    <div id="tab-content" class="container" style="padding-top:20px"></div>
+  </div>`;
+  renderTab();
+}
+
+async function setTab(id) {
+  S.tab = id;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent === { usuarios:'Usuários',presenca:'Presença',candidatos:'Candidatos',cargos:'Cargos',eleicao:'Eleição',resultados:'Resultados',configuracoes:'Configurações' }[id]));
+  if (id !== 'eleicao') stopPoll();
+  await renderTab();
+}
+
+async function renderTab() {
+  await loadState();
+  const el = $('tab-content'); if (!el) return;
+  const fn = { usuarios: tabUsuarios, presenca: tabPresenca, candidatos: tabCandidatos, cargos: tabCargos, eleicao: tabEleicao, resultados: tabResultados, configuracoes: tabConfig }[S.tab];
+  if (fn) el.innerHTML = await fn();
+  bindTabEvents();
+  if (S.tab==='eleicao' && S.elStatus==='ativa') startPoll();
+}
+
+function doLogout() {
+  api.post('/api/logout', {}).catch(() => {});
+  clearSession();
+  stopPoll();
+  renderLogin();
+}
+
+// ─── TAB: USUÁRIOS ────────────────────────────────────────────────────────────
+function tabUsuarios() {
+  const list = S.users.map(u => `
+    <div class="card-sm" style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div style="width:34px;height:34px;border-radius:50%;background:var(--pbg);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:var(--p);flex-shrink:0">${esc(u.nome[0])}</div>
+      <div style="flex:1;min-width:0">
+        <p style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.nome)}</p>
+        <p style="font-size:11px;color:#888">${esc(u.cpf)}${u.email?' · '+esc(u.email):''}</p>
+      </div>
+      <button class="btn btn-p btn-sm" onclick="editUser('${u.id}')">✏️</button>
+      <button class="btn btn-danger btn-sm" onclick="delUser('${u.id}')">×</button>
+    </div>`).join('');
+  return `
+  <h3 style="font-weight:700;margin-bottom:14px">Eleitores (${S.users.length})</h3>
+  <div class="card">
+    <div class="grid2" style="gap:10px">
+      <div class="field" style="margin:0"><label>Nome completo</label><input id="u-nome" class="input" placeholder="Nome completo"></div>
+      <div class="field" style="margin:0">
+        <label>CPF <span id="u-cpf-st" style="font-weight:400;color:#aaa"></span></label>
+        <input id="u-cpf" class="input" placeholder="000.000.000-00" maxlength="14">
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px"><label>E-mail (opcional)</label><input id="u-email" class="input" placeholder="email@exemplo.com"></div>
+    <div id="u-err" class="err-box" style="display:none"></div>
+    <button class="btn btn-p" style="margin-top:4px" onclick="addUser()">+ Adicionar eleitor</button>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <p style="font-size:13px;font-weight:600;margin-bottom:8px">📥 Importar / Exportar</p>
+    <p style="font-size:12px;color:#888;margin-bottom:10px">CSV com colunas: <code>nome,email,cpf</code></p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <label class="btn btn-p" style="cursor:pointer">📂 Importar CSV<input type="file" accept=".csv,.txt" style="display:none" onchange="importCSV(this)"></label>
+      <a class="btn" href="/api/usuarios/exportar" download="eleitores.csv">📤 Exportar CSV</a>
+    </div>
+    <div id="import-msg" style="display:none;margin-top:10px"></div>
+  </div>
+  <div>${list}</div>
+  <!-- Modal editar -->
+  <div id="modal-edit" class="modal-bg" style="display:none">
+    <div class="card" style="max-width:400px;width:100%">
+      <h3 style="font-weight:700;margin-bottom:14px">✏️ Editar Eleitor</h3>
+      <div class="field"><label>Nome</label><input id="eu-nome" class="input"></div>
+      <div class="field">
+        <label>CPF <span id="eu-cpf-st" style="font-weight:400;color:#aaa"></span></label>
+        <input id="eu-cpf" class="input" maxlength="14">
+      </div>
+      <div class="field"><label>E-mail</label><input id="eu-email" class="input"></div>
+      <div id="eu-err" class="err-box" style="display:none"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn" style="flex:1" onclick="$('modal-edit').style.display='none'">Cancelar</button>
+        <button class="btn btn-p" style="flex:1" onclick="saveEditUser()">Salvar ✓</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function addUser() {
+  const nome  = ($('u-nome').value||'').trim();
+  const cpf   = ($('u-cpf').value||'').trim();
+  const email = ($('u-email').value||'').trim();
+  const e = $('u-err'); e.style.display='none';
+  if (!nome||!cpf) { e.textContent='Nome e CPF obrigatórios.'; e.style.display='block'; return; }
+  if (!validCPF(cpf)) { e.textContent='CPF inválido. Verifique os dígitos.'; e.style.display='block'; return; }
+  const res = await api.post('/api/usuarios', { nome, email, cpf });
+  if (res.error) { e.textContent=res.error; e.style.display='block'; return; }
+  toast('Eleitor adicionado!','success'); await renderTab();
+}
+
+let _editId = null;
+function editUser(id) {
+  const u = S.users.find(x=>x.id===id); if (!u) return;
+  _editId = id;
+  $('eu-nome').value  = u.nome;
+  $('eu-cpf').value   = u.cpf;
+  $('eu-email').value = u.email||'';
+  $('eu-err').style.display='none';
+  $('modal-edit').style.display='flex';
+  cpfInput('eu-cpf','eu-cpf-st');
+}
+async function saveEditUser() {
+  const nome  = ($('eu-nome').value||'').trim();
+  const cpf   = ($('eu-cpf').value||'').trim();
+  const email = ($('eu-email').value||'').trim();
+  const e = $('eu-err'); e.style.display='none';
+  if (!nome||!cpf) { e.textContent='Nome e CPF obrigatórios.'; e.style.display='block'; return; }
+  const res = await api.patch('/api/usuarios/'+_editId, { nome, cpf, email });
+  if (res.error) { e.textContent=res.error; e.style.display='block'; return; }
+  $('modal-edit').style.display='none';
+  toast('Atualizado!','success'); await renderTab();
+}
+async function delUser(id) {
+  if (!confirm('Remover este eleitor?')) return;
+  await api.del('/api/usuarios/'+id); toast('Removido.','warn'); await renderTab();
+}
+async function importCSV(input) {
+  const file=input.files[0]; if(!file) return;
+  const text=await file.text(), m=$('import-msg');
+  m.style.display='block'; m.className='info-box'; m.textContent='Importando...';
+  const res=await api.postTxt('/api/usuarios/importar',text);
+  if(res.error){m.className='err-box';m.textContent=res.error;return;}
+  m.className='succ-box'; m.textContent=`✓ ${res.added} adicionado(s), ${res.skipped} ignorado(s).`;
+  toast(`${res.added} eleitor(es) importado(s)!`,'success'); await renderTab();
+}
+
+// ─── TAB: PRESENÇA ────────────────────────────────────────────────────────────
+function tabPresenca() {
+  const naoVotou = S.users.filter(u => S.presentes.includes(u.id) && !S.jaVotou.includes(u.id));
+  const alerta = S.elStatus==='ativa' && naoVotou.length>0 ? `
+    <div class="warn-box" style="margin-bottom:12px"><strong>Ainda não votaram (${naoVotou.length}):</strong>${naoVotou.map(u=>`<br>· ${esc(u.nome)}`).join('')}</div>` : '';
+  const list = S.users.map(u => {
+    const p=S.presentes.includes(u.id), v=S.jaVotou.includes(u.id);
+    return `<div class="pres-item ${p?'p':''} ${v?'v':''}" onclick="${v?'':(`presToggle('${u.id}')`)}" >
+      <div style="width:20px;height:20px;border-radius:50%;border:1.5px solid ${p?'#3B6D11':'#bbb'};background:${p?'#3B6D11':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;color:#fff;font-weight:700">${p?'✓':''}</div>
+      <div style="flex:1"><p style="font-size:13px;font-weight:600">${esc(u.nome)}</p><p style="font-size:11px;color:#888">${esc(u.cpf)}</p></div>
+      ${v?'<span class="badge bdg-ok">Votou</span>':p?'<span class="badge bdg-info">Presente</span>':''}
+    </div>`;
+  }).join('');
+  return `
+  <h3 style="font-weight:700;margin-bottom:4px">Lista de Presença</h3>
+  <p style="font-size:12px;color:#888;margin-bottom:12px">${S.presentes.length} de ${S.users.length} presentes · ${S.jaVotou.length} votaram</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    <button class="btn btn-s btn-sm" id="btn-mtodos" onclick="presMarcarTodos()">✓ Marcar todos</button>
+    <button class="btn btn-danger btn-sm" id="btn-dtodos" onclick="presDesmarcarTodos()">✗ Desmarcar todos</button>
+    <a class="btn btn-p btn-sm" href="/api/presenca/exportar-xlsx" download="lista-presenca.xlsx">📊 Exportar .xlsx</a>
+  </div>
+  ${alerta}<div>${list}</div>`;
+}
+async function presToggle(id)        { await api.post('/api/presenca/'+id,{}); await renderTab(); }
+async function presMarcarTodos()     { const b=$('btn-mtodos');if(b){b.disabled=true;b.textContent='…';} await api.post('/api/presenca/marcar-todos',{});   toast('Todos marcados!','success'); await renderTab(); }
+async function presDesmarcarTodos()  { const b=$('btn-dtodos');if(b){b.disabled=true;b.textContent='…';} await api.post('/api/presenca/desmarcar-todos',{}); toast('Desmarcados.','warn');   await renderTab(); }
+
+// ─── TAB: CANDIDATOS ─────────────────────────────────────────────────────────
+// Candidatos são selecionados a partir dos usuários cadastrados
+const EMOJIS = ['👨','👩','🧑','👨‍💼','👩‍💼','👨‍🦳','👩‍🦳','😊','🧔','👴','👵'];
+let _emoji = '😊';
+
+function tabCandidatos() {
+  const candUserIds = S.candidatos.map(c => c.userId);
+  const disponiveis = S.users.filter(u => !candUserIds.includes(u.id));
+  const selectHtml = disponiveis.length > 0
+    ? `<div class="field"><label>Selecionar membro como candidato</label>
+        <select id="c-userid" class="input">
+          <option value="">-- Escolha um membro --</option>
+          ${disponiveis.map(u=>`<option value="${esc(u.id)}">${esc(u.nome)} — CPF: ${esc(u.cpf)}</option>`).join('')}
+        </select></div>`
+    : `<div class="warn-box">Todos os membros cadastrados já são candidatos, ou não há membros ainda.</div>`;
+  const emojiHtml = EMOJIS.map(e =>
+    `<div onclick="selEmoji('${e}')" style="width:34px;height:34px;border-radius:50%;background:${_emoji===e?'var(--pbg)':'#f5f4ef'};border:1.5px solid ${_emoji===e?'var(--p)':'#ddd'};display:flex;align-items:center;justify-content:center;font-size:19px;cursor:pointer">${e}</div>`
+  ).join('');
+  const list = S.candidatos.map(c => `
+    <div class="card-sm" style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      ${avHTML(c, 42)}
+      <div style="flex:1">
+        <p style="font-weight:600;font-size:13px">${esc(c.nome)}</p>
+        <p style="font-size:11px;color:#888">${c.idade} anos · ${esc((c.desc||'').slice(0,55))}${(c.desc||'').length>55?'...':''}</p>
+      </div>
+      <label class="btn btn-p btn-sm" style="cursor:pointer">📷<input type="file" accept="image/*" style="display:none" onchange="uploadFoto('${c.id}',this)"></label>
+      <button class="btn btn-danger btn-sm" onclick="delCand('${c.id}')">×</button>
+    </div>`).join('');
+  return `
+  <h3 style="font-weight:700;margin-bottom:14px">Candidatos (${S.candidatos.length})</h3>
+  <div class="card" style="margin-bottom:14px">
+    <p style="font-size:12px;color:#888;margin-bottom:10px">Selecione um membro cadastrado para torná-lo candidato.</p>
+    ${selectHtml}
+    <div class="grid2" style="gap:10px;margin-top:10px;margin-bottom:10px">
+      <div class="field" style="margin:0"><label>Idade</label><input id="c-idade" class="input" type="number" min="1" placeholder="Idade"></div>
+      <div class="field" style="margin:0"><label>Avatar (sem foto)</label>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">${emojiHtml}</div>
+      </div>
+    </div>
+    <div class="field"><label>Histórico / Descrição</label><textarea id="c-desc" class="input" rows="2" placeholder="Breve histórico do candidato..."></textarea></div>
+    <button class="btn btn-p" onclick="addCand()">+ Adicionar candidato</button>
+  </div>
+  <div>${list}</div>`;
+}
+
+function selEmoji(e) { _emoji=e; renderTab(); }
+
+async function addCand() {
+  const userId = $('c-userid') ? ($('c-userid').value||'') : '';
+  const idade  = ($('c-idade').value||'').trim();
+  const desc   = ($('c-desc').value||'').trim();
+  if (!userId) { toast('Selecione um membro.','warn'); return; }
+  if (!idade)  { toast('Informe a idade.','warn'); return; }
+  const res = await api.post('/api/candidatos', { userId, idade, emoji: _emoji, desc });
+  if (res.error) { toast(res.error,'danger'); return; }
+  _emoji = '😊';
+  toast('Candidato adicionado!','success'); await renderTab();
+}
+async function uploadFoto(id, input) {
+  const file=input.files[0]; if(!file) return;
+  toast('Enviando foto...','info');
+  const r=await api.upload('/api/candidatos/'+id+'/foto','foto',file);
+  if(r.error){toast('Erro: '+r.error,'danger');return;}
+  toast('Foto atualizada!','success'); await renderTab();
+}
+async function delCand(id) {
+  if(!confirm('Remover candidato?'))return;
+  await api.del('/api/candidatos/'+id); toast('Removido.','warn'); await renderTab();
+}
+
+// ─── TAB: CARGOS ──────────────────────────────────────────────────────────────
+function tabCargos() {
+  const list = S.cargos.map(g => `
+    <div class="card-sm" style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+      <span style="font-size:22px">🏛️</span>
+      <div style="flex:1"><p style="font-weight:600;font-size:13px">${esc(g.nome)}</p><p style="font-size:11px;color:#888">${g.vagas} vaga${g.vagas>1?'s':''}</p></div>
+      <button class="btn btn-danger btn-sm" onclick="delCargo('${g.id}')">×</button>
+    </div>`).join('');
+  return `
+  <h3 style="font-weight:700;margin-bottom:14px">Cargos (${S.cargos.length})</h3>
+  <div class="card" style="margin-bottom:14px">
+    <div class="grid2" style="gap:10px;margin-bottom:10px">
+      <div class="field" style="margin:0"><label>Nome do cargo</label><input id="g-nome" class="input" placeholder="Ex: Diácono, Presbítero"></div>
+      <div class="field" style="margin:0"><label>Vagas</label><input id="g-vagas" class="input" type="number" min="1" value="1"></div>
+    </div>
+    <button class="btn btn-p" onclick="addCargo()">+ Adicionar cargo</button>
+  </div>
+  <div>${list}</div>`;
+}
+async function addCargo()  { const n=($('g-nome').value||'').trim(),v=$('g-vagas').value; if(!n||!v){toast('Preencha os campos.','warn');return;} const r=await api.post('/api/cargos',{nome:n,vagas:v}); if(r.error){toast(r.error,'danger');return;} toast('Cargo criado!','success'); await renderTab(); }
+async function delCargo(id){ if(!confirm('Remover?'))return; await api.del('/api/cargos/'+id); toast('Removido.','warn'); await renderTab(); }
+
+// ─── TAB: ELEIÇÃO ─────────────────────────────────────────────────────────────
+function tabEleicao() {
+  const st = S.elStatus;
+  const stats = `<div class="grid2" style="margin-bottom:16px">${[['👥','Presentes',S.presentes.length],['✅','Votaram',S.jaVotou.length],['🏛️','Cargos',S.cargos.length],['👤','Candidatos',S.candidatos.length]].map(([ic,lb,v])=>`<div class="stat-card"><div class="lbl">${ic} ${lb}</div><div class="val">${v}</div></div>`).join('')}</div>`;
+  let badge='',msg='',btn='';
+  if (st==='aguardando') { badge='<span class="badge bdg-gray">Aguardando</span>'; msg='<p style="font-size:12px;color:#888;margin-bottom:12px">Marque presença, cadastre cargos e candidatos antes de iniciar.</p>'; btn='<button class="btn btn-s btn-full" onclick="elIniciar()">▶ Iniciar Eleição</button>'; }
+  else if (st==='ativa') { badge='<span class="badge bdg-ok">Em andamento</span>'; msg=`<p style="font-size:12px;color:#888;margin-bottom:12px">${S.presentes.length-S.jaVotou.length} eleitor(es) ainda não votou.</p>`; btn='<button class="btn btn-danger btn-full" onclick="elEncerrar()">⏹ Encerrar Eleição</button>'; }
+  else { badge='<span class="badge bdg-warn">Encerrada</span>'; msg='<p style="font-size:12px;color:#888;margin-bottom:12px">Veja os resultados na aba Resultados.</p>'; btn='<button class="btn btn-warn btn-full" onclick="elReiniciar()">🔄 Reiniciar (apaga todos os votos)</button>'; }
+  const naoVotou = S.users.filter(u=>S.presentes.includes(u.id)&&!S.jaVotou.includes(u.id));
+  const nvHtml = st==='ativa' ? `
+    <div class="card" style="margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <p style="font-size:13px;font-weight:700">⏳ Aguardando votação (${naoVotou.length})</p>
+        <span style="font-size:11px;color:#aaa">atualiza a cada 2s</span>
+      </div>
+      ${naoVotou.length===0?'<p style="text-align:center;color:#3B6D11;font-weight:700;font-size:15px;padding:10px">🎉 Todos votaram!</p>':naoVotou.map(u=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f5f4ef"><div style="width:8px;height:8px;border-radius:50%;background:#fbbf24;flex-shrink:0"></div><p style="font-size:13px">${esc(u.nome)}</p></div>`).join('')}
+    </div>` : '';
+  return `
+  <h3 style="font-weight:700;margin-bottom:14px">Controle da Eleição</h3>
+  ${stats}
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><span style="font-weight:600">Status:</span>${badge}</div>
+    ${msg}${btn}
+  </div>
+  ${nvHtml}
+  <div class="card" style="margin-top:14px;background:var(--bg,#f0ede6)">
+    <p style="font-size:13px;font-weight:600;margin-bottom:6px">📺 Painel Datashow</p>
+    <p style="font-size:12px;color:#888;margin-bottom:10px">Exiba no projetor. Atualiza automaticamente.</p>
+    <a class="btn btn-p" href="/datashow" target="_blank">Abrir datashow ↗</a>
+  </div>`;
+}
+async function elIniciar()  { const r=await api.post('/api/eleicao/iniciar',{});  if(r.error){toast(r.error,'danger');return;} toast('Eleição iniciada!','success'); await loadState(); await renderTab(); startPoll(); }
+async function elEncerrar() { if(!confirm('Encerrar a eleição agora?'))return; await api.post('/api/eleicao/encerrar',{}); toast('Eleição encerrada.','info'); stopPoll(); await loadState(); await renderTab(); }
+async function elReiniciar(){ if(!confirm('Reiniciar apaga TODOS os votos. Confirmar?'))return; await api.post('/api/eleicao/reiniciar',{}); toast('Reiniciado.','warn'); await loadState(); await renderTab(); }
+
+function startPoll() { stopPoll(); _pollTimer=setInterval(async()=>{ if(S.tab==='eleicao'&&S.elStatus==='ativa'){await loadState();const el=$('tab-content');if(el){el.innerHTML=tabEleicao();}} },2000); }
+function stopPoll()  { if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;} }
+
+// ─── TAB: RESULTADOS ──────────────────────────────────────────────────────────
+async function tabResultados() {
+  if (S.elStatus!=='encerrada') return `<div style="text-align:center;padding:48px"><div style="font-size:48px">🔒</div><p style="color:#888;margin-top:12px;font-size:14px">Disponível apenas após o encerramento da eleição.</p></div>`;
+  const data = await api.get('/api/resultados');
+  if (!data||!data.cargos) return '<p style="color:#888">Sem dados.</p>';
+  const { resultados, cargos, candidatos, totalPresentes } = data;
+  const html = cargos.map(cargo => {
+    const res=resultados[cargo.id]||{}, branco=res.branco||0;
+    const total=Object.entries(res).filter(([k])=>k!=='branco').reduce((a,[,v])=>a+v,0);
+    const maioria=Math.ceil(totalPresentes/2);
+    const rank=Object.entries(res).filter(([k])=>k!=='branco').map(([cid,v])=>{const c=candidatos.find(x=>x.id===cid);return c?{cid,c,v}:null;}).filter(Boolean).sort((a,b)=>b.v-a.v);
+    const eleitos=rank.filter((r,i)=>i<cargo.vagas&&r.v>=maioria);
+    return `<div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div><h3 style="font-weight:700;font-size:16px">${esc(cargo.nome)}</h3>
+        <p style="font-size:11px;color:#888">${cargo.vagas} vaga${cargo.vagas>1?'s':''} · Maioria: ${maioria} votos (50% dos ${totalPresentes} presentes)</p></div>
+        <span class="badge ${eleitos.length>0?'bdg-ok':'bdg-err'}">${eleitos.length} eleito${eleitos.length!==1?'s':''}</span>
+      </div><div class="divider"></div>
+      ${rank.map((r,i)=>{const pct=totalPresentes>0?Math.round(r.v/totalPresentes*100):0,el=eleitos.some(e=>e.cid===r.cid);
+        return `<div style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;color:#aaa;min-width:18px">#${i+1}</span>
+            ${avHTML(r.c,30)}
+            <p style="font-size:13px;font-weight:${el?700:400};flex:1">${esc(r.c.nome)}</p>
+            <p style="font-size:13px;font-weight:700">${r.v}</p>
+            <p style="font-size:11px;color:#888;min-width:32px;text-align:right">${pct}%</p>
+            ${el?'<span class="badge bdg-ok">✓ Eleito</span>':r.v>0?'<span class="badge bdg-warn">Insuf.</span>':''}
+          </div>
+          <div style="height:7px;background:#eee;border-radius:4px;overflow:hidden;margin-top:5px">
+            <div style="height:100%;border-radius:4px;width:${pct}%;background:${el?'#3B6D11':'var(--p,#185FA5)'};transition:width .6s"></div>
+          </div>
+        </div>`;
+      }).join('')}
+      ${branco>0?`<p style="font-size:11px;color:#aaa;margin-top:4px">Votos em branco: ${branco} (${totalPresentes>0?Math.round(branco/totalPresentes*100):0}%)</p>`:''}
+    </div>`;
+  }).join('');
+  return `<h3 style="font-weight:700;margin-bottom:14px">Resultado da Eleição</h3>
+  <div style="margin-bottom:14px"><a class="btn btn-p" href="/api/resultados/exportar-xlsx" download="resultado-eleicao.xlsx">📊 Exportar Relatório (.xlsx)</a></div>
+  ${html}`;
+}
+
+// ─── TAB: CONFIGURAÇÕES ────────────────────────────────────────────────────────
+function tabConfig() {
+  const c = S.config||{};
+  const colorRow = (id, label, val) => `
+    <div class="field" style="margin:0">
+      <label>${label}</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="color" id="${id}-pick" value="${val}" style="width:38px;height:34px;border:1px solid #ccc;border-radius:6px;cursor:pointer;padding:2px">
+        <input id="${id}-hex" class="input" value="${val}" style="flex:1" placeholder="${val}">
+      </div>
+    </div>`;
+  return `
+  <h3 style="font-weight:700;margin-bottom:14px">⚙️ Configurações</h3>
+  <div class="card" style="margin-bottom:14px">
+    <p style="font-size:13px;font-weight:600;margin-bottom:12px">🏛️ Identidade</p>
+    <div class="field"><label>Nome da Igreja / Instituição</label><input id="cfg-nome" class="input" value="${esc(c.nomeInstituicao||'')}"></div>
+    <div class="field">
+      <label>Logotipo</label>
+      ${c.logoUrl?`<div style="margin-bottom:8px"><img src="${esc(c.logoUrl)}" style="max-height:60px;border-radius:8px"></div>`:''}
+      <label class="btn btn-p btn-sm" style="cursor:pointer;width:fit-content">📷 Enviar logo<input type="file" accept="image/*" style="display:none" onchange="uploadLogo(this)"></label>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <p style="font-size:13px;font-weight:600;margin-bottom:12px">🎨 Cores</p>
+    <div class="grid2" style="gap:12px">
+      ${colorRow('cp','Cor primária (botões)',c.corPrimaria||'#185FA5')}
+      ${colorRow('cs','Cor secundária (sucesso)',c.corSecundaria||'#3B6D11')}
+      ${colorRow('cbg','Fundo das páginas',c.corFundo||'#f0ede6')}
+      ${colorRow('ctx','Cor do texto',c.corTexto||'#1a1a18')}
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+      <button class="btn btn-p" onclick="salvarConfig()">💾 Salvar configurações</button>
+      <button class="btn" onclick="resetCores()">↺ Restaurar padrão</button>
+    </div>
+    <div id="cfg-msg" style="display:none;margin-top:10px"></div>
+  </div>
+  <div class="card">
+    <p style="font-size:13px;font-weight:600;margin-bottom:12px">🔐 Alterar senha do admin</p>
+    <div class="grid2" style="gap:10px">
+      <div class="field" style="margin:0"><label>Senha atual</label><input id="pwd-atual" class="input" type="password"></div>
+      <div class="field" style="margin:0"><label>Nova senha</label><input id="pwd-nova" class="input" type="password"></div>
+    </div>
+    <div id="pwd-err" class="err-box" style="display:none;margin-top:8px"></div>
+    <button class="btn btn-p" style="margin-top:10px" onclick="salvarSenha()">Salvar nova senha</button>
+  </div>`;
+}
+async function uploadLogo(input) {
+  const file=input.files[0];if(!file)return;
+  toast('Enviando logo...','info');
+  const r=await api.upload('/api/config/logo','logo',file);
+  if(r.error){toast('Erro: '+r.error,'danger');return;}
+  toast('Logo atualizado!','success'); await loadState(); await renderTab();
+}
+async function salvarConfig() {
+  const nome = ($('cfg-nome').value||'').trim();
+  const cp  = ($('cp-hex').value||$('cp-pick').value).trim();
+  const cs  = ($('cs-hex').value||$('cs-pick').value).trim();
+  const cbg = ($('cbg-hex').value||$('cbg-pick').value).trim();
+  const ctx = ($('ctx-hex').value||$('ctx-pick').value).trim();
+  const m = $('cfg-msg');
+  const r = await api.post('/api/config',{nomeInstituicao:nome,corPrimaria:cp,corSecundaria:cs,corFundo:cbg,corTexto:ctx});
+  if (r.error){m.className='err-box';m.textContent=r.error;m.style.display='block';return;}
+  m.className='succ-box';m.textContent='✓ Configurações salvas!';m.style.display='block';
+  applyTheme(r.config); toast('Configurações salvas!','success');
+  setTimeout(()=>renderTab(),600);
+}
+function resetCores() { [['cp','#185FA5'],['cs','#3B6D11'],['cbg','#f0ede6'],['ctx','#1a1a18']].forEach(([id,v])=>{const p=$(id+'-pick'),h=$(id+'-hex');if(p)p.value=v;if(h)h.value=v;}); }
+async function salvarSenha() {
+  const atual=$('pwd-atual').value, nova=$('pwd-nova').value;
+  const e=$('pwd-err');e.style.display='none';
+  if(!atual||!nova){e.textContent='Preencha ambos os campos.';e.style.display='block';return;}
+  const r=await api.post('/api/admin/senha',{senhaAtual:atual,novaSenha:nova});
+  if(r.error){e.textContent=r.error;e.style.display='block';return;}
+  toast('Senha alterada!','success');$('pwd-atual').value='';$('pwd-nova').value='';
+}
+
+// ─── Bind events ──────────────────────────────────────────────────────────────
+function cpfInput(inputId, statusId) {
+  const inp=$(inputId), st=$(statusId); if(!inp)return;
+  inp.addEventListener('input',e=>{
+    if(!/^[a-zA-Z]/.test(e.target.value)) e.target.value=fmtCPF(e.target.value);
+    const v=e.target.value, ok=validCPF(v);
+    inp.classList.toggle('cpf-ok',v.replace(/\D/g,'').length===11&&ok);
+    inp.classList.toggle('cpf-err',v.replace(/\D/g,'').length===11&&!ok);
+    if(st){st.textContent=v.replace(/\D/g,'').length===11?(ok?'✓ válido':'✗ inválido'):'';}
+  });
+}
+function bindTabEvents() {
+  cpfInput('u-cpf','u-cpf-st');
+  cpfInput('eu-cpf','eu-cpf-st');
+  // Sync color pickers
+  [['cp'],['cs'],['cbg'],['ctx']].forEach(([id])=>{
+    const pick=$(id+'-pick'), hex=$(id+'-hex');
+    if(!pick||!hex)return;
+    pick.addEventListener('input',e=>hex.value=e.target.value);
+    hex.addEventListener('input',e=>{if(/^#[0-9a-fA-F]{6}$/.test(e.target.value))pick.value=e.target.value;});
+  });
+}
+</script>
+</body>
+</html>

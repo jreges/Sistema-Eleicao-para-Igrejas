@@ -1,0 +1,1273 @@
+/**
+ * Eleição de Oficiais da Igreja — Servidor v4
+ * Node.js puro, zero dependências externas.
+ *
+ * v4: sessões admin via token, todos endpoints admin protegidos,
+ *     usuários sem role/senha, candidatos criados a partir de usuários.
+ */
+'use strict';
+const http  = require('http');
+const fs    = require('fs');
+const path  = require('path');
+const url   = require('url');
+const crypto = require('crypto');
+const { buildXLSX } = require('./xlsx-builder');
+
+const PORT      = 3000;
+const DATA_FILE = path.join(__dirname, 'data', 'state.json');
+const FOTOS_DIR = path.join(__dirname, 'public', 'fotos');
+const LOGO_DIR  = path.join(__dirname, 'public', 'logos');
+const APP_NAME  = 'Eleição de Oficiais da Igreja';
+
+// ─── Sessões Admin ───────────────────────────────────────────────────────────
+// Token aleatório de 32 bytes, expira em 8 horas, armazenado em memória.
+const _sessions = new Map();
+
+function _newToken() { return crypto.randomBytes(32).toString('hex'); }
+function _sessionOk(token) {
+  if (!token) return false;
+  const s = _sessions.get(token);
+  if (!s) return false;
+  if (Date.now() > s.exp) { _sessions.delete(token); return false; }
+  return true;
+}
+function _createSession() {
+  const t = _newToken();
+  _sessions.set(t, { exp: Date.now() + 8 * 3600 * 1000 });
+  return t;
+}
+function _destroySession(token) { _sessions.delete(token); }
+// Limpa tokens expirados de hora em hora
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _sessions) if (now > v.exp) _sessions.delete(k);
+}, 3600 * 1000);
+
+// ─── Hash de senha ────────────────────────────────────────────────────────────
+function hashPwd(s) {
+  return crypto.createHash('sha256').update(s + 'eleicao_salt_2024').digest('hex');
+}
+
+// ─── Estado padrão ────────────────────────────────────────────────────────────
+// Usuários: apenas id, nome, email, cpf — sem role nem senha
+const DEFAULT = {
+  users: [
+    { id:'u1', nome:'Ana Oliveira', email:'ana@ex.com',   cpf:'111.111.111-11' },
+    { id:'u2', nome:'Bruno Santos', email:'bruno@ex.com', cpf:'222.222.222-22' },
+    { id:'u3', nome:'Carla Mendes', email:'carla@ex.com', cpf:'333.333.333-33' },
+    { id:'u4', nome:'Diego Lima',   email:'diego@ex.com', cpf:'444.444.444-44' },
+    { id:'u5', nome:'Elisa Nunes',  email:'elisa@ex.com', cpf:'555.555.555-55' },
+    { id:'u6', nome:'Fábio Costa',  email:'fabio@ex.com', cpf:'666.666.666-66' },
+  ],
+  // Candidatos apontam para um userId e repetem o nome para facilitar leitura
+  candidatos: [
+    { id:'c1', userId:'u1', nome:'Ana Oliveira', idade:42, emoji:'👩',  fotoUrl:'', desc:'15 anos de serviço, liderança em projetos comunitários.' },
+    { id:'c2', userId:'u2', nome:'Bruno Santos', idade:38, emoji:'👨',  fotoUrl:'', desc:'Formação teológica, experiência em aconselhamento pastoral.' },
+    { id:'c3', userId:'u3', nome:'Carla Mendes', idade:51, emoji:'👩‍🦳', fotoUrl:'', desc:'Coordenadora de grupos de estudo há 8 anos.' },
+    { id:'c4', userId:'u4', nome:'Diego Lima',   idade:45, emoji:'🧑',  fotoUrl:'', desc:'Administrador, responsável pelas finanças nos últimos 5 anos.' },
+    { id:'c5', userId:'u5', nome:'Elisa Nunes',  idade:36, emoji:'👩‍💼', fotoUrl:'', desc:'Trabalho com jovens e evangelismo urbano há uma década.' },
+  ],
+  cargos: [
+    { id:'g1', nome:'Diácono',    vagas:2 },
+    { id:'g2', nome:'Presbítero', vagas:1 },
+  ],
+  presentes:  [],
+  jaVotou:    [],
+  resultados: {},
+  elStatus:   'aguardando',
+  config: {
+    nomeInstituicao: APP_NAME,
+    logoUrl:         '',
+    corPrimaria:    '#185FA5',
+    corSecundaria:  '#3B6D11',
+    corFundo:       '#f0ede6',
+    corTexto:       '#1a1a18',
+  },
+  adminSenha: hashPwd('admin'),
+};
+
+// ─── Persistência ─────────────────────────────────────────────────────────────
+function loadState() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const s = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      if (!s.config)     s.config     = { ...DEFAULT.config };
+      if (!s.adminSenha) s.adminSenha = DEFAULT.adminSenha;
+      // Migração: remove role/senha de usuários legados
+      s.users = (s.users || []).map(u => ({
+        id: u.id, nome: u.nome, email: u.email || '', cpf: u.cpf,
+      }));
+      // Migração: garante campos em candidatos legados
+      s.candidatos = (s.candidatos || []).map(c => ({
+        userId: '', emoji: '😊', fotoUrl: '', desc: '', ...c,
+      }));
+      // Renomeia placeholder antigo
+      if (!s.config.nomeInstituicao || s.config.nomeInstituicao === 'Igreja / Instituição') {
+        s.config.nomeInstituicao = APP_NAME;
+      }
+      return s;
+    }
+  } catch (e) { console.error('Erro ao carregar estado:', e.message); }
+  return JSON.parse(JSON.stringify(DEFAULT));
+}
+
+function saveState(st) {
+  try {
+    fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+    fs.writeFileSync(DATA_FILE, JSON.stringify(st, null, 2), 'utf8');
+  } catch (e) { console.error('Erro ao salvar estado:', e.message); }
+}
+
+fs.mkdirSync(FOTOS_DIR, { recursive: true });
+fs.mkdirSync(LOGO_DIR,  { recursive: true });
+
+let ST = loadState();
+const genId = () => Math.random().toString(36).slice(2, 9);
+
+// ─── Validação de CPF ──────────────────────────────────────────────────────────
+function validCPF(cpf) {
+  cpf = cpf.replace(/\D/g, '');
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  let s = 0;
+  for (let i = 0; i < 9; i++) s += +cpf[i] * (10 - i);
+  let r = (s * 10) % 11; if (r >= 10) r = 0;
+  if (r !== +cpf[9]) return false;
+  s = 0;
+  for (let i = 0; i < 10; i++) s += +cpf[i] * (11 - i);
+  r = (s * 10) % 11; if (r >= 10) r = 0;
+  return r === +cpf[10];
+}
+
+// ─── CSV ──────────────────────────────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const hdr = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
+  return lines.slice(1).map(line => {
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const o = {}; hdr.forEach((h, i) => o[h] = vals[i] || ''); return o;
+  });
+}
+function toCSV(rows, headers) {
+  return [headers.join(','),
+    ...rows.map(r => headers.map(h => `"${(r[h] || '').toString().replace(/"/g, '""')}"`).join(','))
+  ].join('\n');
+}
+
+// ─── Multipart ────────────────────────────────────────────────────────────────
+function parseMultipart(buf, boundary) {
+  const parts = {}, sep = Buffer.from('--' + boundary);
+  let pos = 0;
+  while (pos < buf.length) {
+    const start = buf.indexOf(sep, pos); if (start === -1) break;
+    pos = start + sep.length;
+    if (buf[pos] === 45 && buf[pos + 1] === 45) break;
+    if (buf[pos] === 13) pos += 2;
+    const he = buf.indexOf('\r\n\r\n', pos); if (he === -1) break;
+    const hs = buf.slice(pos, he).toString(); pos = he + 4;
+    const ns = buf.indexOf(sep, pos), de = ns === -1 ? buf.length : ns - 2;
+    const data = buf.slice(pos, de); pos = ns;
+    const nm = hs.match(/name="([^"]+)"/), fn = hs.match(/filename="([^"]+)"/), ct = hs.match(/Content-Type:\s*(\S+)/i);
+    if (nm) parts[nm[1]] = { data, filename: fn ? fn[1] : null, text: !fn ? data.toString() : null };
+  }
+  return parts;
+}
+function rawBody(req)  { return new Promise((ok, ko) => { const c = []; req.on('data', b => c.push(b)); req.on('end', () => ok(Buffer.concat(c))); req.on('error', ko); }); }
+function jsonBody(req) { return new Promise((ok, ko) => { let b = ''; req.on('data', c => b += c); req.on('end', () => { try { ok(JSON.parse(b)); } catch { ok(b); } }); req.on('error', ko); }); }
+
+// ─── Respostas ────────────────────────────────────────────────────────────────
+const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+function sendJSON(res, data, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); }
+function sendHTML(res, html) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html); }
+function sendXLSX(res, buf, name) { res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${name}"`, 'Content-Length': buf.length }); res.end(buf); }
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+function getToken(req) { return req.headers['x-admin-token'] || ''; }
+function isAdmin(req)  { return _sessionOk(getToken(req)); }
+function deny(res)     { sendJSON(res, { error: 'Não autorizado. Faça login como administrador.' }, 401); }
+
+// ─── Apuração ─────────────────────────────────────────────────────────────────
+// Eleito = voto >= ceil(presentes / 2)  (maioria absoluta dos presentes)
+function apurar() {
+  const total = ST.presentes.length;
+  return ST.cargos.map(cargo => {
+    const res = ST.resultados[cargo.id] || {}, branco = res.branco || 0;
+    const rank = Object.entries(res)
+      .filter(([k]) => k !== 'branco')
+      .map(([cid, v]) => { const c = ST.candidatos.find(x => x.id === cid); return c ? { cid, c, v } : null; })
+      .filter(Boolean).sort((a, b) => b.v - a.v);
+    const maioria = Math.ceil(total / 2);
+    const eleitos = rank.filter((r, i) => i < cargo.vagas && r.v >= maioria);
+    return { cargo, rank, eleitos, branco, total, maioria };
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SERVIDOR
+// ══════════════════════════════════════════════════════════════════════════════
+const server = http.createServer(async (req, res) => {
+  const p  = url.parse(req.url, true);
+  const pn = decodeURIComponent(p.pathname);
+  const m  = req.method;
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Admin-Token');
+  if (m === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  // ── Arquivos estáticos (fotos / logos) ────────────────────────────────
+  if (m === 'GET' && (pn.startsWith('/fotos/') || pn.startsWith('/logos/'))) {
+    const fp = path.join(__dirname, 'public', pn);
+    if (fs.existsSync(fp)) {
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream' });
+      fs.createReadStream(fp).pipe(res);
+    } else { res.writeHead(404); res.end(); }
+    return;
+  }
+
+  // ── Páginas HTML ──────────────────────────────────────────────────────
+  if (m === 'GET' && pn === '/checkin')  { sendHTML(res, checkinPage());  return; }
+  if (m === 'GET' && pn === '/datashow') { sendHTML(res, datashowPage()); return; }
+  if (m === 'GET' && pn === '/votar') {
+    const vf = path.join(__dirname, 'public', 'votar.html');
+    sendHTML(res, fs.readFileSync(vf, 'utf8')); return;
+  }
+
+  // ── API ───────────────────────────────────────────────────────────────
+  if (pn.startsWith('/api/')) {
+
+    // ─ Pública: estado ────────────────────────────────────────────────
+    if (m === 'GET' && pn === '/api/state') {
+      return sendJSON(res, {
+        users:      ST.users,       // sem role/senha
+        candidatos: ST.candidatos,
+        cargos:     ST.cargos,
+        presentes:  ST.presentes,
+        jaVotou:    ST.jaVotou,
+        elStatus:   ST.elStatus,
+        config:     ST.config,
+      });
+    }
+
+    if (m === 'GET' && pn === '/api/config') { return sendJSON(res, ST.config); }
+
+    if (m === 'GET' && pn === '/api/datashow') {
+      const nv = ST.users.filter(u => ST.presentes.includes(u.id) && !ST.jaVotou.includes(u.id));
+      const ap = ST.elStatus === 'encerrada' ? apurar() : null;
+      return sendJSON(res, {
+        elStatus: ST.elStatus, presentes: ST.presentes.length,
+        jaVotou:  ST.jaVotou.length,  naoVotou: nv.map(u => ({ nome: u.nome })),
+        apuracao: ap ? ap.map(a => ({
+          cargo: a.cargo.nome, vagas: a.cargo.vagas, branco: a.branco, maioria: a.maioria,
+          rank:  a.rank.map(r => ({ nome: r.c.nome, votos: r.v, eleito: a.eleitos.some(e => e.cid === r.cid) })),
+        })) : null,
+        config: ST.config,
+      });
+    }
+
+    // ─ Pública: auth eleitor ──────────────────────────────────────────
+    if (m === 'POST' && pn === '/api/login-eleitor') {
+      const { cpf } = await jsonBody(req);
+      const u = ST.users.find(x => x.cpf === cpf);
+      if (!u)                          return sendJSON(res, { error: 'CPF não encontrado no cadastro.' }, 401);
+      if (!ST.presentes.includes(u.id)) return sendJSON(res, { error: 'Você não está marcado como presente.' }, 403);
+      if (ST.jaVotou.includes(u.id))    return sendJSON(res, { error: 'Você já votou nesta eleição.' }, 403);
+      return sendJSON(res, { ok: true, user: { id: u.id, nome: u.nome, cpf: u.cpf, email: u.email }, elStatus: ST.elStatus });
+    }
+
+    // ─ Pública: votar ────────────────────────────────────────────────
+    if (m === 'POST' && pn === '/api/votar') {
+      const { userId, votos } = await jsonBody(req);
+      if (!userId || !votos)              return sendJSON(res, { error: 'Dados inválidos.' }, 400);
+      if (ST.elStatus !== 'ativa')         return sendJSON(res, { error: 'Eleição não está ativa.' }, 403);
+      if (!ST.presentes.includes(userId))  return sendJSON(res, { error: 'Usuário não está presente.' }, 403);
+      if (ST.jaVotou.includes(userId))     return sendJSON(res, { error: 'Usuário já votou.' }, 409);
+      ST.cargos.forEach(g => {
+        if (!ST.resultados[g.id]) ST.resultados[g.id] = { branco: 0 };
+        const sel = votos[g.id] || [];
+        ST.resultados[g.id].branco += (g.vagas - sel.length);
+        sel.forEach(cid => { ST.resultados[g.id][cid] = (ST.resultados[g.id][cid] || 0) + 1; });
+      });
+      ST.jaVotou.push(userId);
+      saveState(ST);
+      return sendJSON(res, { ok: true });
+    }
+
+    // ─ Pública: resultados ────────────────────────────────────────────
+    if (m === 'GET' && pn === '/api/resultados') {
+      if (ST.elStatus !== 'encerrada') return sendJSON(res, { error: 'Eleição não encerrada.' }, 403);
+      return sendJSON(res, { resultados: ST.resultados, cargos: ST.cargos, candidatos: ST.candidatos, apuracao: apurar(), totalPresentes: ST.presentes.length });
+    }
+
+    // ─ Pública: check-in ─────────────────────────────────────────────
+    if (m === 'POST' && pn === '/api/checkin/buscar') {
+      const { cpf } = await jsonBody(req);
+      const u = ST.users.find(x => x.cpf === cpf);
+      if (!u) return sendJSON(res, { error: 'CPF não encontrado.' }, 404);
+      return sendJSON(res, { ok: true, user: { id: u.id, nome: u.nome, cpf: u.cpf, email: u.email }, jaPresente: ST.presentes.includes(u.id) });
+    }
+    if (m === 'POST' && pn === '/api/checkin/confirmar') {
+      const { cpf } = await jsonBody(req);
+      const u = ST.users.find(x => x.cpf === cpf);
+      if (!u) return sendJSON(res, { error: 'CPF não encontrado.' }, 404);
+      if (ST.presentes.includes(u.id)) return sendJSON(res, { ok: true, msg: 'Presença já confirmada.', user: { id: u.id, nome: u.nome } });
+      ST.presentes.push(u.id); saveState(ST);
+      return sendJSON(res, { ok: true, msg: 'Presença confirmada!', user: { id: u.id, nome: u.nome } });
+    }
+
+    // ─ Admin: login / logout / check ──────────────────────────────────
+    if (m === 'POST' && pn === '/api/login') {
+      const { cpf, pwd } = await jsonBody(req);
+      if (cpf === 'admin' && hashPwd(pwd) === ST.adminSenha) {
+        const token = _createSession();
+        // Retorna role='admin' para o browser salvar na sessão
+        return sendJSON(res, { ok: true, role: 'admin', token });
+      }
+      return sendJSON(res, { error: 'Credenciais inválidas.' }, 401);
+    }
+    if (m === 'POST' && pn === '/api/logout') {
+      _destroySession(getToken(req));
+      return sendJSON(res, { ok: true });
+    }
+    if (m === 'GET' && pn === '/api/auth/check') {
+      return sendJSON(res, { valid: isAdmin(req), role: isAdmin(req) ? 'admin' : null });
+    }
+
+    // ══ A partir daqui, TODOS os endpoints exigem token admin ══════════
+    if (!isAdmin(req)) { deny(res); return; }
+
+    // ─ Config ────────────────────────────────────────────────────────
+    if (m === 'POST' && pn === '/api/config') {
+      const b = await jsonBody(req);
+      ST.config = { ...ST.config, ...b }; saveState(ST);
+      return sendJSON(res, { ok: true, config: ST.config });
+    }
+    if (m === 'POST' && pn === '/api/config/logo') {
+      const ct = req.headers['content-type'] || '', bm = ct.match(/boundary=([^\s;]+)/);
+      if (!bm) return sendJSON(res, { error: 'Content-Type inválido.' }, 400);
+      const parts = parseMultipart(await rawBody(req), bm[1]), file = parts['logo'];
+      if (!file?.filename) return sendJSON(res, { error: 'Arquivo não enviado.' }, 400);
+      const ext = path.extname(file.filename).toLowerCase() || '.png', fn = 'logo' + ext;
+      fs.writeFileSync(path.join(LOGO_DIR, fn), file.data);
+      ST.config.logoUrl = '/logos/' + fn; saveState(ST);
+      return sendJSON(res, { ok: true, logoUrl: ST.config.logoUrl });
+    }
+
+    // ─ Admin: senha ──────────────────────────────────────────────────
+    if (m === 'POST' && pn === '/api/admin/senha') {
+      const { senhaAtual, novaSenha } = await jsonBody(req);
+      if (hashPwd(senhaAtual) !== ST.adminSenha) return sendJSON(res, { error: 'Senha atual incorreta.' }, 403);
+      if (!novaSenha || novaSenha.length < 4)    return sendJSON(res, { error: 'Nova senha deve ter ao menos 4 caracteres.' }, 400);
+      ST.adminSenha = hashPwd(novaSenha); saveState(ST);
+      return sendJSON(res, { ok: true });
+    }
+
+    // ─ Presença ──────────────────────────────────────────────────────
+    if (m === 'POST' && pn === '/api/presenca/marcar-todos')   { ST.presentes = ST.users.map(u => u.id); saveState(ST); return sendJSON(res, { ok: true, presentes: ST.presentes }); }
+    if (m === 'POST' && pn === '/api/presenca/desmarcar-todos') { ST.presentes = []; saveState(ST); return sendJSON(res, { ok: true, presentes: ST.presentes }); }
+    if (m === 'POST' && pn.startsWith('/api/presenca/')) {
+      const id = pn.split('/')[3];
+      if (!ST.users.find(u => u.id === id)) return sendJSON(res, { error: 'Usuário não encontrado.' }, 404);
+      const idx = ST.presentes.indexOf(id);
+      idx >= 0 ? ST.presentes.splice(idx, 1) : ST.presentes.push(id);
+      saveState(ST); return sendJSON(res, { ok: true, presentes: ST.presentes });
+    }
+    if (m === 'GET' && pn === '/api/presenca/exportar-xlsx') {
+      const rows = ST.users.filter(u => ST.presentes.includes(u.id)).sort((a, b) => a.nome.localeCompare(b.nome));
+      const hdr  = [{ v:'#', bold:true, bg:'4472C4' }, { v:'Nome Completo', bold:true, bg:'4472C4' }, { v:'CPF', bold:true, bg:'4472C4' }, { v:'E-mail', bold:true, bg:'4472C4' }, { v:'Votou?', bold:true, bg:'4472C4' }];
+      const buf  = buildXLSX([{ name: 'Presença', rows: [hdr, ...rows.map((u, i) => [i+1, u.nome, u.cpf, u.email||'—', ST.jaVotou.includes(u.id)?'Sim':'Não'])] }]);
+      return sendXLSX(res, buf, 'lista-presenca.xlsx');
+    }
+
+    // ─ Usuários ──────────────────────────────────────────────────────
+    if (m === 'GET' && pn === '/api/usuarios/exportar') {
+      const csv = toCSV(ST.users, ['nome','email','cpf']);
+      res.writeHead(200, { 'Content-Type':'text/csv; charset=utf-8', 'Content-Disposition':'attachment; filename="eleitores.csv"' });
+      return res.end('\uFEFF' + csv);
+    }
+    if (m === 'POST' && pn === '/api/usuarios/importar') {
+      const body = await jsonBody(req);
+      const rows = parseCSV(typeof body === 'string' ? body : body.csv || '');
+      let added = 0, skipped = 0;
+      for (const r of rows) {
+        const nome = r.nome || r['nome completo'] || '', email = r.email || '', cpf = (r.cpf || '').trim();
+        if (!nome || !cpf || !validCPF(cpf.replace(/\D/g,'')) || ST.users.find(u => u.cpf === cpf)) { skipped++; continue; }
+        ST.users.push({ id: genId(), nome, email, cpf }); added++;
+      }
+      saveState(ST); return sendJSON(res, { ok: true, added, skipped });
+    }
+    if (m === 'POST' && pn === '/api/usuarios') {
+      const { nome, email, cpf } = await jsonBody(req);
+      if (!nome || !cpf)                          return sendJSON(res, { error: 'Nome e CPF obrigatórios.' }, 400);
+      if (!validCPF(cpf.replace(/\D/g,'')))        return sendJSON(res, { error: 'CPF inválido.' }, 400);
+      if (ST.users.find(u => u.cpf === cpf))       return sendJSON(res, { error: 'CPF já cadastrado.' }, 409);
+      const u = { id: genId(), nome, email: email||'', cpf };
+      ST.users.push(u); saveState(ST);
+      return sendJSON(res, { ok: true, user: u });
+    }
+    if (m === 'PATCH' && pn.startsWith('/api/usuarios/')) {
+      const id = pn.split('/')[3], u = ST.users.find(x => x.id === id);
+      if (!u) return sendJSON(res, { error: 'Usuário não encontrado.' }, 404);
+      const b = await jsonBody(req);
+      if (b.nome)             u.nome  = b.nome;
+      if (b.email !== undefined) u.email = b.email;
+      if (b.cpf && b.cpf !== u.cpf) {
+        if (!validCPF(b.cpf.replace(/\D/g,'')))         return sendJSON(res, { error: 'CPF inválido.' }, 400);
+        if (ST.users.find(x => x.cpf === b.cpf && x.id !== id)) return sendJSON(res, { error: 'CPF já em uso.' }, 409);
+        u.cpf = b.cpf;
+      }
+      saveState(ST); return sendJSON(res, { ok: true, user: u });
+    }
+    if (m === 'DELETE' && pn.startsWith('/api/usuarios/')) {
+      const id = pn.split('/')[3];
+      ST.users      = ST.users.filter(u => u.id !== id);
+      ST.presentes  = ST.presentes.filter(x => x !== id);
+      ST.jaVotou    = ST.jaVotou.filter(x => x !== id);
+      ST.candidatos = ST.candidatos.filter(c => c.userId !== id);
+      saveState(ST); return sendJSON(res, { ok: true });
+    }
+
+    // ─ Candidatos ────────────────────────────────────────────────────
+    // POST /api/candidatos — cria candidato a partir de um userId
+    if (m === 'POST' && pn === '/api/candidatos') {
+      const { userId, idade, emoji, desc } = await jsonBody(req);
+      if (!userId) return sendJSON(res, { error: 'userId obrigatório.' }, 400);
+      const u = ST.users.find(x => x.id === userId);
+      if (!u) return sendJSON(res, { error: 'Usuário não encontrado.' }, 404);
+      if (ST.candidatos.find(c => c.userId === userId)) return sendJSON(res, { error: 'Este usuário já é candidato.' }, 409);
+      const c = { id: genId(), userId, nome: u.nome, idade: Number(idade)||0, emoji: emoji||'😊', fotoUrl: '', desc: desc||'' };
+      ST.candidatos.push(c); saveState(ST);
+      return sendJSON(res, { ok: true, candidato: c });
+    }
+    if (m === 'PATCH' && pn.match(/^\/api\/candidatos\/[^/]+$/) && !pn.includes('/foto')) {
+      const id = pn.split('/')[3], c = ST.candidatos.find(x => x.id === id);
+      if (!c) return sendJSON(res, { error: 'Candidato não encontrado.' }, 404);
+      const b = await jsonBody(req);
+      if (b.idade !== undefined) c.idade = Number(b.idade);
+      if (b.emoji) c.emoji = b.emoji;
+      if (b.desc  !== undefined) c.desc  = b.desc;
+      saveState(ST); return sendJSON(res, { ok: true, candidato: c });
+    }
+    if (m === 'DELETE' && pn.startsWith('/api/candidatos/') && !pn.includes('/foto')) {
+      const id = pn.split('/')[3], c = ST.candidatos.find(x => x.id === id);
+      if (c?.fotoUrl) { const fp = path.join(__dirname,'public',c.fotoUrl); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
+      ST.candidatos = ST.candidatos.filter(x => x.id !== id); saveState(ST);
+      return sendJSON(res, { ok: true });
+    }
+    if (m === 'POST' && pn.match(/^\/api\/candidatos\/[^/]+\/foto$/)) {
+      const id = pn.split('/')[3], c = ST.candidatos.find(x => x.id === id);
+      if (!c) return sendJSON(res, { error: 'Candidato não encontrado.' }, 404);
+      const ct = req.headers['content-type']||'', bm = ct.match(/boundary=([^\s;]+)/);
+      if (!bm) return sendJSON(res, { error: 'Content-Type inválido.' }, 400);
+      const parts = parseMultipart(await rawBody(req), bm[1]), file = parts['foto'];
+      if (!file?.filename) return sendJSON(res, { error: 'Arquivo não enviado.' }, 400);
+      const ext = path.extname(file.filename).toLowerCase()||'.jpg', fn = 'cand_'+id+ext;
+      fs.writeFileSync(path.join(FOTOS_DIR, fn), file.data);
+      c.fotoUrl = '/fotos/'+fn; saveState(ST);
+      return sendJSON(res, { ok: true, fotoUrl: c.fotoUrl });
+    }
+
+    // ─ Cargos ────────────────────────────────────────────────────────
+    if (m === 'POST' && pn === '/api/cargos') {
+      const { nome, vagas } = await jsonBody(req);
+      if (!nome || !vagas) return sendJSON(res, { error: 'Nome e vagas obrigatórios.' }, 400);
+      ST.cargos.push({ id: genId(), nome, vagas: Number(vagas) }); saveState(ST);
+      return sendJSON(res, { ok: true });
+    }
+    if (m === 'DELETE' && pn.startsWith('/api/cargos/')) {
+      ST.cargos = ST.cargos.filter(g => g.id !== pn.split('/')[3]); saveState(ST);
+      return sendJSON(res, { ok: true });
+    }
+
+    // ─ Eleição ───────────────────────────────────────────────────────
+    if (m === 'POST' && pn === '/api/eleicao/iniciar') {
+      if (!ST.presentes.length)  return sendJSON(res, { error: 'Marque presença de pelo menos 1 eleitor.' }, 400);
+      if (!ST.cargos.length)     return sendJSON(res, { error: 'Cadastre pelo menos 1 cargo.' }, 400);
+      if (!ST.candidatos.length) return sendJSON(res, { error: 'Cadastre pelo menos 1 candidato.' }, 400);
+      ST.elStatus = 'ativa'; saveState(ST); return sendJSON(res, { ok: true });
+    }
+    if (m === 'POST' && pn === '/api/eleicao/encerrar')  { ST.elStatus = 'encerrada';   saveState(ST); return sendJSON(res, { ok: true }); }
+    if (m === 'POST' && pn === '/api/eleicao/reiniciar') { ST.elStatus = 'aguardando'; ST.resultados = {}; ST.jaVotou = []; saveState(ST); return sendJSON(res, { ok: true }); }
+
+    // ─ Resultado XLSX ────────────────────────────────────────────────
+    if (m === 'GET' && pn === '/api/resultados/exportar-xlsx') {
+      if (ST.elStatus !== 'encerrada') return sendJSON(res, { error: 'Eleição não encerrada.' }, 403);
+      const ap = apurar(), sheets = [];
+      sheets.push({ name: 'Resumo', rows: [
+        [{ v: APP_NAME, bold:true, bg:'4472C4' },'',''],['','',''],
+        [{ v:'Total de presentes', bold:true }, ST.presentes.length,''],
+        [{ v:'Total de votantes',  bold:true }, ST.jaVotou.length,''],
+        [{ v:'Abstenções',         bold:true }, ST.presentes.length - ST.jaVotou.length,''],
+        ['','',''],
+        ...ap.map(a => [{ v: a.cargo.nome, bold:true }, `${a.eleitos.length} eleito(s) de ${a.cargo.vagas} vaga(s)`, `Maioria: ${a.maioria} votos`]),
+      ]});
+      for (const a of ap) {
+        const hdr = [['#','Candidato','Votos','% dos presentes','Situação'].map((v,i) => ({ v, bold:true, bg:'4472C4' }))];
+        const rows = a.rank.map((r,i) => {
+          const pct = ST.presentes.length > 0 ? (r.v/ST.presentes.length*100).toFixed(1)+'%' : '0%';
+          const el  = a.eleitos.some(e => e.cid === r.cid);
+          return [i+1, el?{v:r.c.nome,bold:true,bg:'70AD47'}:r.c.nome, el?{v:r.v,bold:true,bg:'70AD47'}:r.v, el?{v:pct,bold:true,bg:'70AD47'}:pct, el?{v:'ELEITO ✓',bold:true,bg:'70AD47'}:(r.v>0?'Não eleito':'Sem votos')];
+        });
+        if (a.branco > 0) rows.push(['—','Votos em branco',a.branco,(a.branco/ST.presentes.length*100).toFixed(1)+'%','—']);
+        sheets.push({ name: a.cargo.nome.slice(0,31), rows: [...hdr, ...rows] });
+      }
+      const pr = ST.users.filter(u => ST.presentes.includes(u.id)).sort((a,b) => a.nome.localeCompare(b.nome));
+      sheets.push({ name:'Lista de Presença', rows: [[{v:'#',bold:true,bg:'4472C4'},{v:'Nome',bold:true,bg:'4472C4'},{v:'CPF',bold:true,bg:'4472C4'},{v:'Votou?',bold:true,bg:'4472C4'}], ...pr.map((u,i)=>[i+1,u.nome,u.cpf,ST.jaVotou.includes(u.id)?'Sim':'Não'])] });
+      return sendXLSX(res, buildXLSX(sheets), 'resultado-eleicao.xlsx');
+    }
+
+    return sendJSON(res, { error: 'Rota não encontrada.' }, 404);
+  }
+
+  // ── SPA admin ─────────────────────────────────────────────────────────
+  const fp = path.join(__dirname, 'public', 'index.html');
+  if (fs.existsSync(fp)) sendHTML(res, fs.readFileSync(fp, 'utf8'));
+  else sendHTML(res, '<h1>index.html não encontrado.</h1>');
+});
+
+function checkinPage() {
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Check-in</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#f0ede6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+h1{font-size:22px;font-weight:700;margin-bottom:6px}
+.sub{font-size:13px;color:#888;margin-bottom:22px;line-height:1.5}
+label{font-size:12px;color:#666;display:block;margin-bottom:5px;font-weight:600}
+input{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid #ddd;font-size:16px;outline:none;transition:border-color .15s;background:#fafaf8;font-family:inherit}
+input:focus{border-color:var(--p,#185FA5)}
+.btn{width:100%;margin-top:14px;padding:13px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer;background:var(--p,#185FA5);color:#fff;transition:opacity .15s}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-outline{background:#fff;color:var(--p,#185FA5);border:1.5px solid var(--p,#185FA5)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
+.modal{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:340px}
+.row{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f0ede6}
+.rl{font-size:11px;color:#aaa;min-width:52px;font-weight:600;text-transform:uppercase;padding-top:2px}
+.rv{font-size:15px;font-weight:700}
+.btn-row{display:flex;gap:10px;margin-top:18px}
+.btn-row button{flex:1;padding:11px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;border:none}
+.bc{background:#f0ede6;color:#666}
+.bg{background:var(--s,#3B6D11);color:#fff}
+.err{background:#fcebeb;color:#a32d2d;border-radius:8px;padding:10px;font-size:13px;margin-top:10px}
+.ok-msg{background:#eaf3de;color:#3B6D11;border-radius:8px;padding:10px;font-size:13px;margin-top:10px;font-weight:600}
+#logo{max-height:60px;margin-bottom:12px}
+.redirect-bar{height:4px;background:#eee;border-radius:2px;margin-top:16px;overflow:hidden}
+.redirect-fill{height:100%;background:var(--s,#3B6D11);border-radius:2px;transition:width 3s linear}
+</style>
+</head><body>
+
+<div id="tela-cpf">
+  <div class="card">
+    <div id="logo-wrap" style="text-align:center"></div>
+    <div style="font-size:44px;text-align:center;margin-bottom:12px">🗳️</div>
+    <h1 id="nome-inst">Check-in na Eleição</h1>
+    <p class="sub">Digite seu CPF para confirmar sua presença.</p>
+    <label>Seu CPF</label>
+    <input id="cpf-in" type="text" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="off">
+    <div id="err" style="display:none"></div>
+    <button class="btn" id="btn-ok" onclick="buscar()">Confirmar presença</button>
+  </div>
+</div>
+
+<div class="overlay" id="modal" style="display:none">
+  <div class="modal">
+    <div style="font-size:36px;text-align:center;margin-bottom:12px">✅</div>
+    <p style="font-weight:700;font-size:17px;margin-bottom:14px;text-align:center">Confirme seus dados</p>
+    <div class="row"><span class="rl">Nome</span><span class="rv" id="m-nome"></span></div>
+    <div class="row"><span class="rl">CPF</span><span class="rv" id="m-cpf"></span></div>
+    <div class="row"><span class="rl">E-mail</span><span class="rv" id="m-email"></span></div>
+    <div id="m-err" class="err" style="display:none"></div>
+    <div class="btn-row">
+      <button class="bc" onclick="fechar()">Cancelar</button>
+      <button class="bg" onclick="confirmar()">Confirmar ✓</button>
+    </div>
+  </div>
+</div>
+
+<div id="tela-ok" style="display:none;width:100%;max-width:360px">
+  <div class="card" style="text-align:center">
+    <div style="font-size:64px;margin-bottom:12px">🎉</div>
+    <h1 id="ok-nome" style="margin-bottom:8px;font-size:20px"></h1>
+    <p style="font-size:14px;color:#666;line-height:1.7">Presença confirmada com sucesso!<br>Redirecionando para a votação...</p>
+    <div class="redirect-bar"><div class="redirect-fill" id="redirect-fill" style="width:0%"></div></div>
+    <button class="btn btn-outline" style="margin-top:14px;font-size:13px" onclick="window.location.href='/votar'">Ir para votação agora →</button>
+  </div>
+</div>
+
+<script>
+(async()=>{
+  const c=await(await fetch('/api/config')).json();
+  document.body.style.background=c.corFundo||'#f0ede6';
+  document.documentElement.style.setProperty('--p',c.corPrimaria||'#185FA5');
+  document.documentElement.style.setProperty('--s',c.corSecundaria||'#3B6D11');
+  if(c.logoUrl) document.getElementById('logo-wrap').innerHTML='<img id="logo" src="'+c.logoUrl+'">';
+  document.getElementById('nome-inst').textContent='Check-in — '+(c.nomeInstituicao||'Eleição');
+})();
+
+const fmt=v=>v.replace(/\\D/g,'').replace(/(\\d{3})(\\d{3})(\\d{3})(\\d{2})/,'$1.$2.$3-$4').slice(0,14);
+const inp=document.getElementById('cpf-in');
+inp.addEventListener('input',e=>e.target.value=fmt(e.target.value));
+inp.addEventListener('keydown',e=>{if(e.key==='Enter')buscar();});
+let _cpf='';
+
+async function buscar(){
+  const cpf=inp.value.trim();
+  const err=document.getElementById('err');
+  err.style.display='none';
+  if(cpf.replace(/\\D/g,'').length<11){
+    err.className='err'; err.textContent='Digite um CPF válido com 11 dígitos.'; err.style.display='block'; return;
+  }
+  const btn=document.getElementById('btn-ok');
+  btn.disabled=true; btn.textContent='Buscando...';
+  try{
+    const r=await fetch('/api/checkin/buscar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf})});
+    const d=await r.json();
+    btn.disabled=false; btn.textContent='Confirmar presença';
+    if(d.error){ err.className='err'; err.textContent=d.error; err.style.display='block'; return; }
+    if(d.jaPresente){
+      err.className='ok-msg';
+      err.textContent='✓ Você já está registrado como presente!';
+      err.style.display='block';
+      // Já presente — redireciona direto para votação após 2s
+      setTimeout(()=>window.location.href='/votar', 2000);
+      return;
+    }
+    _cpf=cpf;
+    document.getElementById('m-nome').textContent=d.user.nome;
+    document.getElementById('m-cpf').textContent=d.user.cpf;
+    document.getElementById('m-email').textContent=d.user.email||'—';
+    document.getElementById('modal').style.display='flex';
+  }catch(e){
+    btn.disabled=false; btn.textContent='Confirmar presença';
+    err.className='err'; err.textContent='Erro de conexão. Verifique a rede e tente novamente.'; err.style.display='block';
+  }
+}
+
+function fechar(){ document.getElementById('modal').style.display='none'; }
+
+async function confirmar(){
+  const me=document.getElementById('m-err'); me.style.display='none';
+  const r=await fetch('/api/checkin/confirmar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:_cpf})});
+  const d=await r.json();
+  if(d.error){ me.textContent=d.error; me.style.display='block'; return; }
+  // Sucesso — fecha modal, mostra tela OK e redireciona
+  document.getElementById('modal').style.display='none';
+  document.getElementById('tela-cpf').style.display='none';
+  document.getElementById('ok-nome').textContent=d.user.nome+'!';
+  const tela=document.getElementById('tela-ok');
+  tela.style.display='block';
+  // Anima barra e redireciona em 3s
+  requestAnimationFrame(()=>{
+    requestAnimationFrame(()=>{
+      document.getElementById('redirect-fill').style.width='100%';
+    });
+  });
+  setTimeout(()=>window.location.href='/votar', 3000);
+}
+</script>
+</body></html>`;
+}
+
+function votarPage() {
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Votação</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg,#f0ede6);color:var(--tx,#1a1a18);min-height:100vh}
+.page{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.wrap{width:100%;max-width:380px}
+.box{background:#fff;border:1px solid #ddd;border-radius:14px;padding:20px}
+.big-box{max-width:520px;width:100%;margin:0 auto}
+.input{width:100%;padding:11px 13px;border-radius:8px;border:1.5px solid #ccc;font-size:16px;outline:none;font-family:inherit;background:#fff;color:inherit}
+.input:focus{border-color:var(--p,#185FA5)}
+.btn{display:flex;align-items:center;justify-content:center;padding:12px 16px;border-radius:10px;font-size:15px;font-weight:700;border:none;cursor:pointer;width:100%;margin-top:12px;font-family:inherit}
+.btn-p{background:var(--p,#185FA5);color:#fff}
+.btn-p:disabled{opacity:.5;cursor:not-allowed}
+.btn-s{background:var(--s,#3B6D11);color:#fff}
+.btn-back{background:#f0ede6;color:#555;font-size:13px;max-width:110px}
+.err{background:#fcebeb;color:#a32d2d;font-size:13px;padding:9px 12px;border-radius:8px;margin-top:10px}
+/* candidato */
+.cand{background:#fff;border:1.5px solid #ddd;border-radius:12px;padding:13px;margin-bottom:9px;cursor:pointer;display:flex;align-items:center;gap:13px}
+.cand.sel{border-color:var(--p,#185FA5);background:rgba(24,95,165,.08)}
+.check{width:24px;height:24px;border-radius:50%;border:1.5px solid #ccc;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;font-weight:700;color:#fff}
+.check.on{background:var(--p,#185FA5);border-color:var(--p,#185FA5)}
+.foto{border-radius:50%;object-fit:cover;flex-shrink:0}
+.emj{border-radius:50%;background:#f0ede6;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+/* user strip */
+.user-strip{background:#fff;border:1px solid #e0e0dc;border-radius:10px;padding:9px 13px;display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.ua{width:36px;height:36px;border-radius:50%;background:var(--p,#185FA5);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;flex-shrink:0}
+/* dot steps */
+.dot{width:9px;height:9px;border-radius:50%;background:#ccc}
+.dot.on{background:var(--p,#185FA5)}.dot.done{background:var(--s,#3B6D11)}
+/* espera */
+.espera-icon{font-size:60px;display:block;text-align:center;margin-bottom:14px;animation:bob 2.5s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.dl-row{display:flex;justify-content:center;gap:7px;margin:16px 0}
+.dl{width:9px;height:9px;border-radius:50%;background:var(--p,#185FA5);animation:dl 1.4s ease-in-out infinite}
+.dl:nth-child(2){animation-delay:.2s}.dl:nth-child(3){animation-delay:.4s}
+@keyframes dl{0%,80%,100%{opacity:.2;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+/* modal */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="page"><div class="dl-row"><div class="dl"></div><div class="dl"></div><div class="dl"></div></div></div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// Estado global — persiste enquanto a página não recarregar
+// ─────────────────────────────────────────────
+const App = {
+  cfg:   {},
+  cands: [],
+  cargos:[],
+  user:  null,   // { id, nome, cpf, email }
+  votos: {},     // { cargoId: [candId, ...] }
+  step:  0,
+  tela:  'login' // login | espera | voto | confirmar | fim | encerrada
+};
+
+// ─────────────────────────────────────────────
+// Utilitários
+// ─────────────────────────────────────────────
+const R = id => document.getElementById(id);
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function fmtCPF(v) {
+  var d = v.replace(/[^0-9]/g, '');
+  if (d.length > 3)  d = d.slice(0,3) + '.' + d.slice(3);
+  if (d.length > 7)  d = d.slice(0,7) + '.' + d.slice(7);
+  if (d.length > 11) d = d.slice(0,11) + '-' + d.slice(11);
+  return d.slice(0,14);
+}
+function applyTheme(c) {
+  var p = c.corPrimaria || '#185FA5';
+  var s = c.corSecundaria || '#3B6D11';
+  var bg = c.corFundo || '#f0ede6';
+  document.documentElement.style.setProperty('--p', p);
+  document.documentElement.style.setProperty('--s', s);
+  document.documentElement.style.setProperty('--bg', bg);
+  document.body.style.background = bg;
+  document.title = (c.nomeInstituicao || 'Eleição') + ' — Votação';
+}
+function imgErr(el) {
+  el.style.display = 'none';
+  if (el.nextElementSibling) el.nextElementSibling.style.display = 'flex';
+}
+function av(c, sz) {
+  if (!c) return '';
+  var fsz = Math.round(sz * 0.45);
+  if (c.fotoUrl)
+    return '<img src="' + esc(c.fotoUrl) + '" class="foto" width="' + sz + '" height="' + sz + '" onerror="imgErr(this)">'
+      + '<div class="emj" style="width:' + sz + 'px;height:' + sz + 'px;font-size:' + fsz + 'px;display:none">' + esc(c.emoji||'😊') + '</div>';
+  return '<div class="emj" style="width:' + sz + 'px;height:' + sz + 'px;font-size:' + fsz + 'px">' + esc(c.emoji||'😊') + '</div>';
+}
+
+// ─────────────────────────────────────────────
+// Render principal — chama a função da tela certa
+// ─────────────────────────────────────────────
+function render() {
+  var t = App.tela;
+  if (t === 'login')     return telaLogin();
+  if (t === 'espera')    return telaEspera();
+  if (t === 'voto')      return telaVoto();
+  if (t === 'confirmar') return telaConfirmar();
+  if (t === 'fim')       return telaFim();
+  if (t === 'encerrada') return telaEncerrada();
+}
+
+// ─────────────────────────────────────────────
+// TELA: Login
+// ─────────────────────────────────────────────
+function telaLogin() {
+  var c = App.cfg;
+  var logo = c.logoUrl
+    ? '<img src="' + esc(c.logoUrl) + '" style="max-height:56px;margin-bottom:14px;display:block;margin-left:auto;margin-right:auto">'
+    : '<div style="font-size:52px;text-align:center;margin-bottom:10px">🗳️</div>';
+  R('root').innerHTML =
+    '<div class="page"><div class="wrap">'
+    + '<div style="text-align:center;margin-bottom:20px">' + logo
+    + '<h1 style="font-size:21px;font-weight:700">' + esc(c.nomeInstituicao||'Eleição') + '</h1>'
+    + '<p style="font-size:13px;color:#888;margin-top:5px">Digite seu CPF para votar</p></div>'
+    + '<div class="box">'
+    + '<label style="font-size:12px;color:#666;display:block;margin-bottom:6px;font-weight:600">Seu CPF</label>'
+    + '<input id="cpf-in" class="input" placeholder="000.000.000-00" inputmode="numeric" maxlength="14" autocomplete="off" spellcheck="false">'
+    + '<div id="login-err" class="err" style="display:none"></div>'
+    + '<button id="btn-login" class="btn btn-p" onclick="acaoLogin()">Entrar para votar</button>'
+    + '</div></div></div>';
+  var inp = R('cpf-in');
+  if (inp) {
+    inp.addEventListener('input', function(e){ e.target.value = fmtCPF(e.target.value); });
+    inp.addEventListener('keydown', function(e){ if (e.key === 'Enter') acaoLogin(); });
+    inp.focus();
+  }
+}
+
+async function acaoLogin() {
+  var cpf = (R('cpf-in').value || '').trim();
+  var errEl = R('login-err');
+  errEl.style.display = 'none';
+  if (cpf.replace(/[^0-9]/g,'').length < 11) {
+    errEl.textContent = 'Digite o CPF completo (11 dígitos).';
+    errEl.style.display = 'block'; return;
+  }
+  var btn = R('btn-login');
+  btn.disabled = true; btn.textContent = 'Aguarde...';
+  try {
+    var r = await fetch('/api/login-eleitor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cpf: cpf })
+    });
+    var d = await r.json();
+    btn.disabled = false; btn.textContent = 'Entrar para votar';
+    if (d.error) { errEl.textContent = d.error; errEl.style.display = 'block'; return; }
+    App.user  = d.user;
+    App.votos = {};
+    App.step  = 0;
+    // Decide tela pelo status que o servidor devolveu
+    if (d.elStatus === 'ativa')      { App.tela = 'voto';      render(); }
+    else if (d.elStatus === 'encerrada') { App.tela = 'encerrada'; render(); }
+    else                             { App.tela = 'espera';    render(); }
+  } catch(e) {
+    btn.disabled = false; btn.textContent = 'Entrar para votar';
+    errEl.textContent = 'Erro de conexão. Verifique a rede e tente novamente.';
+    errEl.style.display = 'block';
+  }
+}
+
+// ─────────────────────────────────────────────
+// TELA: Aguardando início  ← ABORDAGEM NOVA
+// Não usa setInterval. Usa setTimeout com função nomeada
+// que verifica e chama a si mesma novamente.
+// ─────────────────────────────────────────────
+var _esperaTimer = null;
+
+function telaEspera() {
+  // Para qualquer poll anterior
+  if (_esperaTimer) { clearTimeout(_esperaTimer); _esperaTimer = null; }
+
+  R('root').innerHTML =
+    '<div class="page"><div class="wrap">'
+    + (App.cfg.logoUrl ? '<div style="text-align:center;margin-bottom:12px"><img src="' + esc(App.cfg.logoUrl) + '" style="max-height:44px"></div>' : '')
+    + '<div class="box" style="text-align:center;padding:32px 24px">'
+    + '<span class="espera-icon">⏳</span>'
+    + '<h2 style="font-size:19px;font-weight:700;margin-bottom:8px">Aguardando início</h2>'
+    + '<p style="font-size:14px;color:#555;line-height:1.7">'
+    + 'Olá, <strong>' + esc(App.user.nome) + '</strong>!<br>'
+    + 'Sua presença está confirmada.<br>'
+    + 'A votação ainda não foi iniciada.</p>'
+    + '<div class="dl-row"><div class="dl"></div><div class="dl"></div><div class="dl"></div></div>'
+    + '<p style="font-size:12px;color:#bbb">Esta página verifica automaticamente<br>quando a votação começar.</p>'
+    + '<p id="ts" style="font-size:11px;color:#ccc;margin-top:8px">&nbsp;</p>'
+    + '</div></div></div>';
+
+  // Inicia o loop de verificação
+  verificarStatus();
+}
+
+async function verificarStatus() {
+  // Cancela timer anterior se existir
+  if (_esperaTimer) { clearTimeout(_esperaTimer); _esperaTimer = null; }
+
+  // Atualiza timestamp na tela
+  var ts = R('ts');
+  if (ts) ts.textContent = 'Verificado às ' + new Date().toLocaleTimeString('pt-BR');
+
+  try {
+    var r = await fetch('/api/state');
+    var d = await r.json();
+
+    // Atualiza candidatos e cargos (podem ter mudado)
+    App.cands  = d.candidatos || [];
+    App.cargos = d.cargos || [];
+
+    var status = d.elStatus || 'aguardando';
+
+    if (status === 'ativa') {
+      // Eleição começou! Vai direto para votação
+      App.tela = 'voto';
+      render();
+      return; // Para o loop
+    }
+
+    if (status === 'encerrada') {
+      App.tela = 'encerrada';
+      render();
+      return; // Para o loop
+    }
+
+    // Ainda aguardando: agenda próxima verificação em 3 segundos
+    _esperaTimer = setTimeout(verificarStatus, 3000);
+
+  } catch(e) {
+    // Erro de rede: tenta novamente em 5 segundos
+    var ts2 = R('ts');
+    if (ts2) ts2.textContent = 'Erro de conexão — tentando novamente...';
+    _esperaTimer = setTimeout(verificarStatus, 5000);
+  }
+}
+
+// ─────────────────────────────────────────────
+// TELA: Votação
+// ─────────────────────────────────────────────
+function telaVoto() {
+  var cargo = App.cargos[App.step];
+  if (!cargo) { App.tela = 'confirmar'; render(); return; }
+  var sel = App.votos[cargo.id] || [];
+  var dots = App.cargos.map(function(_, i) {
+    var cls = i === App.step ? 'on' : (i < App.step ? 'done' : '');
+    return '<div class="dot ' + cls + '" style="width:9px;height:9px"></div>';
+  }).join('');
+
+  var cands = App.cands.map(function(c) {
+    var s = sel.indexOf(c.id) >= 0;
+    return '<div class="cand ' + (s?'sel':'') + '" onclick="toggleCand('' + c.id + '',' + cargo.vagas + ')">'
+      + av(c, 60)
+      + '<div style="flex:1;min-width:0">'
+      + '<p style="font-weight:700;font-size:14px;color:' + (s?'var(--p)':'inherit') + '">' + esc(c.nome) + '</p>'
+      + '<p style="font-size:12px;color:#888;margin-top:2px">' + c.idade + ' anos</p>'
+      + '<p style="font-size:11px;color:#aaa;margin-top:3px;line-height:1.4">' + esc(c.desc) + '</p>'
+      + '</div>'
+      + '<div class="check ' + (s?'on':'') + '">' + (s?'✓':'') + '</div>'
+      + '</div>';
+  }).join('');
+
+  var navBtn = App.step < App.cargos.length - 1
+    ? '<button class="btn btn-p" style="flex:1" onclick="proximoCargo()">Próximo →</button>'
+    : '<button class="btn btn-s" style="flex:1" onclick="App.tela='confirmar';render()">Confirmar voto ✓</button>';
+
+  R('root').innerHTML =
+    '<div style="min-height:100vh;padding:14px">'
+    + '<div class="big-box">'
+    // Topo: logo + dots
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+    + (App.cfg.logoUrl ? '<img src="' + esc(App.cfg.logoUrl) + '" style="height:28px;flex-shrink:0">' : '<span style="font-size:20px">🗳️</span>')
+    + '<div style="flex:1"></div>'
+    + '<div style="display:flex;gap:4px">' + dots + '</div>'
+    + '</div>'
+    // Identificação do eleitor
+    + '<div class="user-strip">'
+    + '<div class="ua">' + esc((App.user.nome||'?')[0].toUpperCase()) + '</div>'
+    + '<div style="flex:1;min-width:0">'
+    + '<p style="font-size:13px;font-weight:700;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(App.user.nome) + '</p>'
+    + '<p style="font-size:11px;color:#888;margin-top:1px">CPF: ' + esc(App.user.cpf) + '</p>'
+    + '</div>'
+    + '<span style="font-size:10px;color:#bbb;font-weight:600;text-transform:uppercase;letter-spacing:.3px;flex-shrink:0">Identificado ✓</span>'
+    + '</div>'
+    // Cargo
+    + '<div class="box" style="margin-bottom:10px">'
+    + '<p style="font-size:10px;color:#aaa;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Cargo ' + (App.step+1) + ' de ' + App.cargos.length + '</p>'
+    + '<h2 style="font-size:19px;font-weight:700;margin-top:3px;margin-bottom:6px">' + esc(cargo.nome) + '</h2>'
+    + '<p style="font-size:13px;color:#666">Selecione até <strong>' + cargo.vagas + '</strong> candidato' + (cargo.vagas>1?'s':'')
+    + ' <span style="font-weight:700;color:' + (sel.length===cargo.vagas?'var(--s)':'var(--p)') + '">' + sel.length + '/' + cargo.vagas + '</span></p>'
+    + (sel.length < cargo.vagas ? '<p style="font-size:11px;color:#aaa;margin-top:4px">' + (cargo.vagas-sel.length) + ' voto(s) restante(s) contarão como branco.</p>' : '')
+    + '</div>'
+    // Candidatos
+    + cands
+    // Navegação
+    + '<div style="display:flex;gap:8px;margin-top:4px">'
+    + (App.step > 0 ? '<button class="btn btn-back" onclick="App.step--;render()">← Anterior</button>' : '')
+    + navBtn
+    + '</div>'
+    + '</div></div>';
+}
+
+function toggleCand(candId, vagas) {
+  var cargo = App.cargos[App.step];
+  if (!cargo) return;
+  var sel = (App.votos[cargo.id] || []).slice();
+  var i = sel.indexOf(candId);
+  if (i >= 0) sel.splice(i, 1);
+  else if (sel.length < vagas) sel.push(candId);
+  App.votos[cargo.id] = sel;
+  render();
+}
+
+function proximoCargo() {
+  App.step++;
+  render();
+}
+
+// ─────────────────────────────────────────────
+// TELA: Confirmação
+// ─────────────────────────────────────────────
+function telaConfirmar() {
+  var resumo = App.cargos.map(function(g) {
+    var sv = App.votos[g.id] || [];
+    var itens = sv.length > 0
+      ? sv.map(function(cid) {
+          var c = App.cands.find(function(x){ return x.id === cid; });
+          return '<div style="display:flex;align-items:center;gap:9px;margin-top:5px">' + av(c,38) + '<p style="font-size:14px;font-weight:700">' + esc(c?c.nome:'') + '</p></div>';
+        }).join('')
+      : '<p style="font-size:13px;color:#aaa;font-style:italic">Voto em branco</p>';
+    var extra = sv.length > 0 && sv.length < g.vagas
+      ? '<p style="font-size:11px;color:#aaa;margin-top:3px">' + (g.vagas-sv.length) + ' voto(s) em branco</p>' : '';
+    return '<div style="margin-bottom:14px">'
+      + '<p style="font-size:10px;color:#aaa;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">' + esc(g.nome) + '</p>'
+      + itens + extra + '</div>';
+  }).join('');
+
+  R('root').innerHTML =
+    '<div class="page"><div class="wrap">'
+    + '<div class="box">'
+    + '<h3 style="font-weight:700;font-size:17px;margin-bottom:4px">Confirmar voto?</h3>'
+    + '<p style="font-size:13px;color:#888;margin-bottom:14px">Após confirmar não é possível alterar.</p>'
+    + '<div style="background:#f8f8f6;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12px">'
+    + '<span style="font-weight:700">' + esc(App.user.nome) + '</span>'
+    + ' &nbsp;·&nbsp; CPF: ' + esc(App.user.cpf) + '</div>'
+    + resumo
+    + '<hr style="border:none;border-top:1px solid #eee;margin:12px 0">'
+    + '<div style="display:flex;gap:8px">'
+    + '<button class="btn btn-back" style="max-width:none;flex:1" onclick="App.step=App.cargos.length-1;App.tela='voto';render()">Revisar</button>'
+    + '<button id="btn-conf" class="btn btn-s" style="flex:1" onclick="acaoConfirmar()">Confirmar ✓</button>'
+    + '</div></div></div></div>';
+}
+
+async function acaoConfirmar() {
+  var btn = R('btn-conf');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+  try {
+    var r = await fetch('/api/votar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: App.user.id, votos: App.votos })
+    });
+    var d = await r.json();
+    if (d.error) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Confirmar ✓'; }
+      alert('Erro: ' + d.error); return;
+    }
+    App.tela = 'fim'; render();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirmar ✓'; }
+    alert('Erro de conexão ao registrar voto. Tente novamente.');
+  }
+}
+
+// ─────────────────────────────────────────────
+// TELA: Voto registrado
+// ─────────────────────────────────────────────
+function telaFim() {
+  R('root').innerHTML =
+    '<div class="page"><div class="wrap">'
+    + '<div class="box" style="text-align:center;padding:36px 24px">'
+    + '<div style="font-size:68px;margin-bottom:14px">🎉</div>'
+    + '<h2 style="font-weight:700;font-size:20px;margin-bottom:8px">Voto registrado!</h2>'
+    + '<p style="font-size:14px;color:#666;line-height:1.65;margin-bottom:22px">'
+    + 'Obrigado, <strong>' + esc(App.user.nome) + '</strong>.<br>'
+    + 'Seu voto foi computado com sucesso.</p>'
+    + '<button class="btn btn-p" onclick="App.user=null;App.tela='login';render()">Voltar ao início</button>'
+    + '</div></div></div>';
+}
+
+// ─────────────────────────────────────────────
+// TELA: Eleição encerrada
+// ─────────────────────────────────────────────
+function telaEncerrada() {
+  R('root').innerHTML =
+    '<div class="page"><div class="wrap">'
+    + '<div class="box" style="text-align:center;padding:36px 24px">'
+    + '<div style="font-size:52px;margin-bottom:14px">🔒</div>'
+    + '<h2 style="font-size:18px;font-weight:700;margin-bottom:8px">Eleição encerrada</h2>'
+    + '<p style="font-size:14px;color:#888;line-height:1.6">Os resultados estão disponíveis<br>no painel administrativo.</p>'
+    + '<button class="btn btn-p" style="margin-top:20px" onclick="App.user=null;App.tela='login';render()">Voltar</button>'
+    + '</div></div></div>';
+}
+
+// ─────────────────────────────────────────────
+// Funções auxiliares para onclick (evitar aspas aninhadas no HTML)
+// ─────────────────────────────────────────────
+function irConfirmar()  { App.tela = 'confirmar'; render(); }
+function voltarVoto()   { App.step = App.cargos.length - 1; App.tela = 'voto'; render(); }
+function voltarLogin()  { App.user = null; App.tela = 'login'; render(); }
+
+
+// ─────────────────────────────────────────────
+// Boot: carrega config e candidatos, depois renderiza
+// ─────────────────────────────────────────────
+(async function boot() {
+  try {
+    var d = await (await fetch('/api/state')).json();
+    App.cfg    = d.config     || {};
+    App.cands  = d.candidatos || [];
+    App.cargos = d.cargos     || [];
+    applyTheme(App.cfg);
+  } catch(e) {}
+  render();
+})();
+</script>
+</body>
+</html>`;
+}
+
+function datashowPage() {
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Painel — Eleição</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1923;color:#fff;min-height:100vh;padding:28px 32px}
+h1{font-size:30px;font-weight:900;letter-spacing:-1px;margin-bottom:2px}
+.sub{font-size:13px;color:#5a7a96;margin-bottom:24px}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:24px}
+.badge{display:inline-flex;align-items:center;gap:7px;padding:7px 16px;border-radius:100px;font-size:13px;font-weight:700}
+.b-ativa{background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.25)}
+.b-agd{background:rgba(90,122,150,.12);color:#7aa3c0;border:1px solid rgba(90,122,150,.2)}
+.b-enc{background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.2)}
+.dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.dl{background:#4ade80;animation:pulse 1.5s infinite}
+.dy{background:#fbbf24}
+.dg{background:#7aa3c0}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+.stat{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:16px 20px}
+.slbl{font-size:11px;color:#5a7a96;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;font-weight:600}
+.sval{font-size:44px;font-weight:900;line-height:1}
+.cb{color:#60a5fa}.cg{color:#4ade80}.ca{color:#fbbf24}
+.prog-wrap{background:rgba(255,255,255,.07);border-radius:100px;height:12px;overflow:hidden;margin-bottom:6px}
+.prog-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,#185FA5,#4ade80);transition:width 1.2s ease}
+.prog-lbl{font-size:13px;color:#5a7a96;margin-bottom:20px}
+.slbl2{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5a7a96;font-weight:700;margin-bottom:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:20px}
+.nv{background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.18);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:8px}
+.nvd{width:7px;height:7px;border-radius:50%;background:#fbbf24;flex-shrink:0;animation:pulse 2s infinite}
+.nvn{font-size:13px;font-weight:600;color:#fde68a}
+/* Resultado */
+.res-cargo{margin-bottom:20px}
+.res-titulo{font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,.08)}
+.res-row{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.res-rank{font-size:13px;color:#5a7a96;min-width:22px;text-align:center}
+.res-nome{font-size:14px;font-weight:600;flex:1}
+.res-votos{font-size:18px;font-weight:900;min-width:36px;text-align:right}
+.res-pct{font-size:12px;color:#5a7a96;min-width:40px;text-align:right}
+.res-bar{flex:2;background:rgba(255,255,255,.08);border-radius:100px;height:8px;overflow:hidden}
+.res-bar-fill{height:100%;border-radius:100px;transition:width 1s ease}
+.eleito{color:#4ade80}.neleito{color:#e2e8f0}
+.badge-eleito{background:rgba(74,222,128,.15);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-size:11px;font-weight:700;padding:2px 8px;border-radius:100px}
+.branco-row{font-size:12px;color:#5a7a96;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.06)}
+.upd{position:fixed;bottom:14px;right:18px;font-size:11px;color:#2d4a61}
+#logo{max-height:48px;object-fit:contain}
+</style></head><body>
+<div class="topbar">
+  <div style="display:flex;align-items:center;gap:14px">
+    <div id="logo-wrap"></div>
+    <div><h1 id="titulo-inst">🗳️ Eleição de Oficiais</h1><p class="sub">Painel em tempo real</p></div>
+  </div>
+  <div id="badge" class="badge b-agd"><div class="dot dg"></div>Carregando...</div>
+</div>
+<div class="stats">
+  <div class="stat"><div class="slbl">Eleitores presentes</div><div class="sval cb" id="s1">—</div></div>
+  <div class="stat"><div class="slbl">Já votaram</div><div class="sval cg" id="s2">—</div></div>
+  <div class="stat"><div class="slbl">Aguardando</div><div class="sval ca" id="s3">—</div></div>
+</div>
+<div class="prog-wrap"><div class="prog-fill" id="prog" style="width:0%"></div></div>
+<p class="prog-lbl" id="prog-lbl">Carregando...</p>
+<div id="main-content"></div>
+<div class="upd" id="upd">Atualizando...</div>
+
+<script>
+const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+let firstRun=true;
+async function tick(){
+  try{
+    const d=await(await fetch('/api/datashow')).json();
+
+    // Config visual
+    if(firstRun){
+      firstRun=false;
+      if(d.config?.logoUrl) document.getElementById('logo-wrap').innerHTML='<img id="logo" src="'+esc(d.config.logoUrl)+'">';
+      if(d.config?.nomeInstituicao) document.getElementById('titulo-inst').textContent='🗳️ '+d.config.nomeInstituicao;
+    }
+
+    // Badge
+    const badge=document.getElementById('badge');
+    if(d.elStatus==='ativa'){badge.className='badge b-ativa';badge.innerHTML='<div class="dot dl"></div>Eleição em andamento';}
+    else if(d.elStatus==='encerrada'){badge.className='badge b-enc';badge.innerHTML='<div class="dot dy"></div>Eleição encerrada';}
+    else{badge.className='badge b-agd';badge.innerHTML='<div class="dot dg"></div>Aguardando início';}
+
+    document.getElementById('s1').textContent=d.presentes;
+    document.getElementById('s2').textContent=d.jaVotou;
+    document.getElementById('s3').textContent=d.naoVotou.length;
+
+    const pct=d.presentes>0?Math.round(d.jaVotou/d.presentes*100):0;
+    document.getElementById('prog').style.width=pct+'%';
+    document.getElementById('prog-lbl').textContent=d.presentes>0?pct+'% — '+d.jaVotou+' de '+d.presentes+' eleitores votaram':'Nenhum eleitor presente';
+
+    const mc=document.getElementById('main-content');
+
+    if(d.elStatus==='encerrada' && d.apuracao){
+      // Resultado: ordenado por votos decrescente por cargo
+      let html='';
+      for(const a of d.apuracao){
+        html+='<div class="res-cargo"><div class="res-titulo">'+esc(a.cargo)+' — '+a.vagas+' vaga'+(a.vagas>1?'s':'')+'</div>';
+        const maxV=a.rank.length>0?a.rank[0].votos:1;
+        a.rank.forEach((r,i)=>{
+          const barPct=maxV>0?Math.round(r.votos/maxV*100):0;
+          const pctPres=d.presentes>0?Math.round(r.votos/d.presentes*100):0;
+          html+='<div class="res-row">'
+            +'<span class="res-rank">#'+(i+1)+'</span>'
+            +'<span class="res-nome '+(r.eleito?'eleito':'neleito')+'">'+esc(r.nome)+(r.eleito?' <span class="badge-eleito">Eleito ✓</span>':'')+'</span>'
+            +'<div class="res-bar"><div class="res-bar-fill" style="width:'+barPct+'%;background:'+(r.eleito?'#4ade80':'#60a5fa')+'"></div></div>'
+            +'<span class="res-pct">'+pctPres+'%</span>'
+            +'<span class="res-votos '+(r.eleito?'eleito':'neleito')+'">'+r.votos+'</span>'
+            +'</div>';
+        });
+        if(a.branco>0){
+          const pb=d.presentes>0?Math.round(a.branco/d.presentes*100):0;
+          html+='<div class="branco-row">Votos em branco / nulos: '+a.branco+' ('+pb+'%)</div>';
+        }
+        html+='<div style="font-size:11px;color:#3d5166;margin-top:6px">Maioria necessária: '+a.maioria+' votos (50% dos '+d.presentes+' presentes)</div>';
+        html+='</div>';
+      }
+      mc.innerHTML=html;
+    } else if(d.elStatus==='ativa'){
+      let html='';
+      if(d.naoVotou.length===0){
+        html='<div style="text-align:center;padding:24px;font-size:20px;font-weight:700;color:#4ade80">🎉 Todos os presentes já votaram!</div>';
+      }else{
+        html='<div class="slbl2">Aguardando votação ('+d.naoVotou.length+')</div><div class="grid">';
+        html+=d.naoVotou.map(u=>'<div class="nv"><div class="nvd"></div><span class="nvn">'+esc(u.nome)+'</span></div>').join('');
+        html+='</div>';
+      }
+      mc.innerHTML=html;
+    } else {
+      mc.innerHTML='<div style="text-align:center;padding:32px;color:#3d5166">Aguardando início da eleição...</div>';
+    }
+
+    document.getElementById('upd').textContent='Última atualização: '+new Date().toLocaleTimeString('pt-BR');
+  }catch(e){document.getElementById('upd').textContent='Aguardando conexão...';}
+}
+tick();setInterval(tick,2000);
+</script></body></html>`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+server.listen(PORT, '0.0.0.0', () => {
+  const nets = require('os').networkInterfaces();
+  let ip = 'localhost';
+  for (const iface of Object.values(nets))
+    for (const n of iface)
+      if (n.family === 'IPv4' && !n.internal) { ip = n.address; break; }
+  const U = 'http://' + ip + ':' + PORT;
+  console.log('');
+  console.log('╔══════════════════════════════════════════════╗');
+  console.log('║  🗳️  ' + ''.padEnd(40) + '║');
+  console.log('╠══════════════════════════════════════════════╣');
+  console.log('║  Admin:    ' + ('http://localhost:' + PORT).padEnd(34) + '║');
+  console.log('║  Rede:     ' + U.padEnd(34) + '║');
+  console.log('║  Votação:  ' + (U+'/votar').padEnd(34) + '║');
+  console.log('║  Check-in: ' + (U+'/checkin').padEnd(34) + '║');
+  console.log('║  Datashow: ' + (U+'/datashow').padEnd(34) + '║');
+  console.log('╠══════════════════════════════════════════════╣');
+  console.log('║  admin: usuário "admin" / senha "admin"   ║');
+  console.log('╚══════════════════════════════════════════════╝');
+  console.log('');
+});

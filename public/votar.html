@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Votação</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg, #f0ede6);
+  color: var(--tx, #1a1a18);
+  min-height: 100vh;
+}
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.wrap  { width: 100%; max-width: 380px; }
+.big   { width: 100%; max-width: 520px; margin: 0 auto; }
+.box {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 12px;
+}
+.input {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: 8px;
+  border: 1.5px solid #ccc;
+  font-size: 16px;
+  outline: none;
+  font-family: inherit;
+  background: #fff;
+  color: inherit;
+  transition: border-color .15s;
+}
+.input:focus { border-color: var(--p, #185FA5); }
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 12px;
+  font-family: inherit;
+  transition: opacity .15s;
+}
+.btn:hover  { opacity: .9; }
+.btn:active { opacity: .8; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-p    { background: var(--p, #185FA5); color: #fff; }
+.btn-s    { background: var(--s, #3B6D11); color: #fff; }
+.btn-back {
+  background: #f0ede6;
+  color: #555;
+  font-size: 13px;
+  max-width: 110px;
+  margin-top: 0;
+}
+.err {
+  background: #fcebeb;
+  color: #a32d2d;
+  font-size: 13px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  margin-top: 10px;
+}
+/* Candidato */
+.cand {
+  background: #fff;
+  border: 1.5px solid #ddd;
+  border-radius: 12px;
+  padding: 13px;
+  margin-bottom: 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  transition: border-color .15s, background .15s;
+}
+.cand.sel {
+  border-color: var(--p, #185FA5);
+  background: rgba(24,95,165,.08);
+}
+.check {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid #ccc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  transition: background .15s, border-color .15s;
+}
+.check.on {
+  background: var(--p, #185FA5);
+  border-color: var(--p, #185FA5);
+}
+.foto {
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.emj {
+  border-radius: 50%;
+  background: #f0ede6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+/* Identificação do eleitor */
+.user-strip {
+  background: #fff;
+  border: 1px solid #e0e0dc;
+  border-radius: 10px;
+  padding: 9px 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.ua {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--p, #185FA5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  flex-shrink: 0;
+}
+/* Dots de progresso */
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ccc;
+  flex-shrink: 0;
+}
+.dot.on   { background: var(--p, #185FA5); }
+.dot.done { background: var(--s, #3B6D11); }
+/* Tela de espera */
+.espera-icon {
+  font-size: 60px;
+  display: block;
+  text-align: center;
+  margin-bottom: 14px;
+  animation: bob 2.5s ease-in-out infinite;
+}
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
+}
+.dl-row {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+  margin: 16px 0;
+}
+.dl {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--p, #185FA5);
+  animation: dl 1.4s ease-in-out infinite;
+}
+.dl:nth-child(2) { animation-delay: .2s; }
+.dl:nth-child(3) { animation-delay: .4s; }
+@keyframes dl {
+  0%, 80%, 100% { opacity: .2; transform: scale(.8); }
+  40%           { opacity: 1;  transform: scale(1);  }
+}
+/* Modal de confirmação */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+</style>
+</head>
+<body>
+
+<div id="root">
+  <div class="page">
+    <div class="dl-row">
+      <div class="dl"></div>
+      <div class="dl"></div>
+      <div class="dl"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// Estado global
+// ─────────────────────────────────────────────────────────────────────────────
+var App = {
+  cfg:    {},
+  cands:  [],
+  cargos: [],
+  user:   null,   // { id, nome, cpf, email }
+  votos:  {},     // { cargoId: [candId, ...] }
+  step:   0,
+  tela:   'login' // login | espera | voto | confirmar | fim | encerrada
+};
+
+var _esperaTimer = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilitários
+// ─────────────────────────────────────────────────────────────────────────────
+function R(id) { return document.getElementById(id); }
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fmtCPF(v) {
+  var d = v.replace(/[^0-9]/g, '');
+  if (d.length > 9)  d = d.slice(0,3) + '.' + d.slice(3,6) + '.' + d.slice(6,9) + '-' + d.slice(9);
+  else if (d.length > 6) d = d.slice(0,3) + '.' + d.slice(3,6) + '.' + d.slice(6);
+  else if (d.length > 3) d = d.slice(0,3) + '.' + d.slice(3);
+  return d.slice(0, 14);
+}
+
+function applyTheme(c) {
+  var p  = c.corPrimaria   || '#185FA5';
+  var s  = c.corSecundaria || '#3B6D11';
+  var bg = c.corFundo      || '#f0ede6';
+  document.documentElement.style.setProperty('--p', p);
+  document.documentElement.style.setProperty('--s', s);
+  document.documentElement.style.setProperty('--bg', bg);
+  document.body.style.background = bg;
+  document.title = (c.nomeInstituicao || 'Eleição') + ' — Votação';
+}
+
+// Converte hex #rrggbb para rgba(..., 0.1)
+function hexBg(h) {
+  try {
+    var r = parseInt(h.slice(1,3), 16);
+    var g = parseInt(h.slice(3,5), 16);
+    var b = parseInt(h.slice(5,7), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',.1)';
+  } catch(e) { return 'rgba(24,95,165,.1)'; }
+}
+
+// Fallback para foto quebrada
+function imgFallback(el) {
+  el.style.display = 'none';
+  var next = el.nextElementSibling;
+  if (next) next.style.display = 'flex';
+}
+
+// Gera HTML de avatar (foto ou emoji)
+function av(c, sz) {
+  if (!c) return '';
+  var fsz = Math.round(sz * 0.45);
+  var style = 'width:' + sz + 'px;height:' + sz + 'px;font-size:' + fsz + 'px;';
+  if (c.fotoUrl) {
+    return '<img src="' + esc(c.fotoUrl) + '" class="foto"'
+      + ' width="' + sz + '" height="' + sz + '"'
+      + ' onerror="imgFallback(this)"'
+      + ' style="' + style + 'border-radius:50%;object-fit:cover;flex-shrink:0">'
+      + '<div class="emj" style="' + style + 'display:none">'
+      + esc(c.emoji || '😊') + '</div>';
+  }
+  return '<div class="emj" style="' + style + '">' + esc(c.emoji || '😊') + '</div>';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Roteador
+// ─────────────────────────────────────────────────────────────────────────────
+function render() {
+  var t = App.tela;
+  if (t === 'login')     { telaLogin();     return; }
+  if (t === 'espera')    { telaEspera();    return; }
+  if (t === 'voto')      { telaVoto();      return; }
+  if (t === 'confirmar') { telaConfirmar(); return; }
+  if (t === 'fim')       { telaFim();       return; }
+  if (t === 'encerrada') { telaEncerrada(); return; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TELA 1 — Login (só CPF)
+// ─────────────────────────────────────────────────────────────────────────────
+function telaLogin() {
+  stopEspera();
+  App.user  = null;
+  App.votos = {};
+  App.step  = 0;
+
+  var c    = App.cfg;
+  var logo = c.logoUrl
+    ? '<img src="' + esc(c.logoUrl) + '" style="max-height:56px;margin-bottom:14px;display:block;margin-left:auto;margin-right:auto">'
+    : '<div style="font-size:52px;text-align:center;margin-bottom:10px">🗳️</div>';
+
+  var html = '<div class="page"><div class="wrap">'
+    + '<div style="text-align:center;margin-bottom:20px">' + logo
+    + '<h1 style="font-size:21px;font-weight:700">' + esc(c.nomeInstituicao || 'Eleição') + '</h1>'
+    + '<p style="font-size:13px;color:#888;margin-top:5px">Digite seu CPF para votar</p></div>'
+    + '<div class="box">'
+    + '<label style="font-size:12px;color:#666;display:block;margin-bottom:6px;font-weight:600">Seu CPF</label>'
+    + '<input id="cpf-in" class="input" placeholder="000.000.000-00" inputmode="numeric" maxlength="14" autocomplete="off" spellcheck="false">'
+    + '<div id="login-err" class="err" style="display:none"></div>'
+    + '<button id="btn-login" class="btn btn-p" onclick="acaoLogin()">Entrar para votar</button>'
+    + '</div></div></div>';
+
+  R('root').innerHTML = html;
+
+  var inp = R('cpf-in');
+  if (inp) {
+    inp.addEventListener('input', function(e) {
+      e.target.value = fmtCPF(e.target.value);
+    });
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') acaoLogin();
+    });
+    inp.focus();
+  }
+}
+
+async function acaoLogin() {
+  var cpf   = (R('cpf-in').value || '').trim();
+  var errEl = R('login-err');
+  errEl.style.display = 'none';
+
+  if (cpf.replace(/[^0-9]/g, '').length < 11) {
+    errEl.textContent = 'Digite o CPF completo (11 dígitos).';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  var btn = R('btn-login');
+  btn.disabled    = true;
+  btn.textContent = 'Aguarde...';
+
+  try {
+    var resp = await fetch('/api/login-eleitor', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ cpf: cpf })
+    });
+    var d = await resp.json();
+
+    btn.disabled    = false;
+    btn.textContent = 'Entrar para votar';
+
+    if (d.error) {
+      errEl.textContent = d.error;
+      errEl.style.display = 'block';
+      return;
+    }
+
+    App.user  = d.user;
+    App.votos = {};
+    App.step  = 0;
+
+    // Decide tela pelo status recebido do servidor
+    if (d.elStatus === 'ativa')       { App.tela = 'voto';      render(); }
+    else if (d.elStatus === 'encerrada') { App.tela = 'encerrada'; render(); }
+    else                              { App.tela = 'espera';    render(); }
+
+  } catch(e) {
+    btn.disabled    = false;
+    btn.textContent = 'Entrar para votar';
+    errEl.textContent = 'Erro de conexão. Verifique a rede e tente novamente.';
+    errEl.style.display = 'block';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TELA 2 — Aguardando início da eleição
+// Usa setTimeout recursivo com função nomeada — sem setInterval, sem closures.
+// ─────────────────────────────────────────────────────────────────────────────
+function telaEspera() {
+  stopEspera();
+
+  var cfg  = App.cfg;
+  var nome = App.user ? App.user.nome : '';
+
+  var html = '<div class="page"><div class="wrap">'
+    + (cfg.logoUrl
+        ? '<div style="text-align:center;margin-bottom:12px"><img src="' + esc(cfg.logoUrl) + '" style="max-height:44px"></div>'
+        : '')
+    + '<div class="box" style="text-align:center;padding:32px 24px">'
+    + '<span class="espera-icon">⏳</span>'
+    + '<h2 style="font-size:19px;font-weight:700;margin-bottom:8px">Aguardando início</h2>'
+    + '<p style="font-size:14px;color:#555;line-height:1.7">'
+    + 'Olá, <strong>' + esc(nome) + '</strong>!<br>'
+    + 'Sua presença está confirmada.<br>'
+    + 'A votação ainda não foi iniciada.</p>'
+    + '<div class="dl-row"><div class="dl"></div><div class="dl"></div><div class="dl"></div></div>'
+    + '<p style="font-size:12px;color:#bbb">Esta página verifica automaticamente<br>quando a votação começar.</p>'
+    + '<p id="espera-ts" style="font-size:11px;color:#ccc;margin-top:8px">&nbsp;</p>'
+    + '</div></div></div>';
+
+  R('root').innerHTML = html;
+
+  // Inicia loop de verificação
+  verificarStatus();
+}
+
+function stopEspera() {
+  if (_esperaTimer) {
+    clearTimeout(_esperaTimer);
+    _esperaTimer = null;
+  }
+}
+
+async function verificarStatus() {
+  // Atualiza timestamp visível
+  var ts = R('espera-ts');
+  if (ts) ts.textContent = 'Verificado às ' + new Date().toLocaleTimeString('pt-BR');
+
+  try {
+    var resp = await fetch('/api/state');
+    var d    = await resp.json();
+
+    // Atualiza candidatos e cargos (podem mudar enquanto aguarda)
+    App.cands  = d.candidatos || [];
+    App.cargos = d.cargos     || [];
+
+    var status = d.elStatus || 'aguardando';
+
+    if (status === 'ativa') {
+      stopEspera();
+      App.tela = 'voto';
+      render();
+      return;
+    }
+    if (status === 'encerrada') {
+      stopEspera();
+      App.tela = 'encerrada';
+      render();
+      return;
+    }
+    // Ainda aguardando — agenda próxima verificação em 3s
+    _esperaTimer = setTimeout(verificarStatus, 3000);
+
+  } catch(e) {
+    // Erro de rede — tenta de novo em 5s
+    var ts2 = R('espera-ts');
+    if (ts2) ts2.textContent = 'Sem conexão — tentando novamente...';
+    _esperaTimer = setTimeout(verificarStatus, 5000);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TELA 3 — Votação
+// ─────────────────────────────────────────────────────────────────────────────
+function telaVoto() {
+  stopEspera();
+
+  var cargo = App.cargos[App.step];
+  if (!cargo) {
+    App.tela = 'confirmar';
+    render();
+    return;
+  }
+
+  var sel  = App.votos[cargo.id] || [];
+  var falta = cargo.vagas - sel.length;
+
+  // Dots de progresso
+  var dots = '';
+  for (var i = 0; i < App.cargos.length; i++) {
+    var cls = i === App.step ? 'on' : (i < App.step ? 'done' : '');
+    dots += '<div class="dot ' + cls + '" style="width:9px;height:9px"></div>';
+  }
+
+  // Cards de candidatos
+  var cands = '';
+  for (var ci = 0; ci < App.cands.length; ci++) {
+    var c  = App.cands[ci];
+    var sel_c = sel.indexOf(c.id) >= 0;
+    cands += '<div class="cand' + (sel_c ? ' sel' : '') + '" onclick="toggleCand(\'' + c.id + '\',' + cargo.vagas + ')">'
+      + av(c, 60)
+      + '<div style="flex:1;min-width:0">'
+      + '<p style="font-weight:700;font-size:14px;color:' + (sel_c ? 'var(--p)' : 'inherit') + '">' + esc(c.nome) + '</p>'
+      + '<p style="font-size:12px;color:#888;margin-top:2px">' + c.idade + ' anos</p>'
+      + '<p style="font-size:11px;color:#aaa;margin-top:3px;line-height:1.4">' + esc(c.desc) + '</p>'
+      + '</div>'
+      + '<div class="check' + (sel_c ? ' on' : '') + '">' + (sel_c ? '✓' : '') + '</div>'
+      + '</div>';
+  }
+
+  // Botão de navegação
+  var navBtn = App.step < App.cargos.length - 1
+    ? '<button class="btn btn-p" style="flex:1" onclick="proximoCargo()">Próximo →</button>'
+    : '<button class="btn btn-s" style="flex:1" onclick="irConfirmar()">Confirmar voto ✓</button>';
+
+  var backBtn = App.step > 0
+    ? '<button class="btn btn-back" onclick="voltarCargo()">← Anterior</button>'
+    : '';
+
+  var html = '<div style="min-height:100vh;padding:14px">'
+    + '<div class="big">'
+    // Cabeçalho
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+    + (App.cfg.logoUrl
+        ? '<img src="' + esc(App.cfg.logoUrl) + '" style="height:28px;flex-shrink:0">'
+        : '<span style="font-size:20px">🗳️</span>')
+    + '<div style="flex:1"></div>'
+    + '<div style="display:flex;gap:4px">' + dots + '</div>'
+    + '</div>'
+    // Identificação do eleitor
+    + '<div class="user-strip">'
+    + '<div class="ua">' + esc((App.user.nome || '?')[0].toUpperCase()) + '</div>'
+    + '<div style="flex:1;min-width:0">'
+    + '<p style="font-size:13px;font-weight:700;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+    + esc(App.user.nome) + '</p>'
+    + '<p style="font-size:11px;color:#888;margin-top:1px">CPF: ' + esc(App.user.cpf) + '</p>'
+    + '</div>'
+    + '<span style="font-size:10px;color:#bbb;font-weight:600;text-transform:uppercase;letter-spacing:.3px;flex-shrink:0">Identificado ✓</span>'
+    + '</div>'
+    // Card do cargo
+    + '<div class="box">'
+    + '<p style="font-size:10px;color:#aaa;font-weight:700;text-transform:uppercase;letter-spacing:.5px">'
+    + 'Cargo ' + (App.step + 1) + ' de ' + App.cargos.length + '</p>'
+    + '<h2 style="font-size:19px;font-weight:700;margin-top:3px;margin-bottom:6px">' + esc(cargo.nome) + '</h2>'
+    + '<p style="font-size:13px;color:#666">'
+    + 'Selecione até <strong>' + cargo.vagas + '</strong> candidato' + (cargo.vagas > 1 ? 's' : '')
+    + ' <span style="font-weight:700;color:' + (sel.length === cargo.vagas ? 'var(--s)' : 'var(--p)') + '">'
+    + sel.length + '/' + cargo.vagas + '</span></p>'
+    + (falta > 0
+        ? '<p style="font-size:11px;color:#aaa;margin-top:4px">'
+          + falta + ' voto' + (falta > 1 ? 's' : '') + ' restante' + (falta > 1 ? 's' : '')
+          + ' contará' + (falta > 1 ? 'o' : '') + ' como branco.</p>'
+        : '')
+    + '</div>'
+    // Candidatos
+    + cands
+    // Navegação
+    + '<div style="display:flex;gap:8px;margin-top:4px">'
+    + backBtn + navBtn
+    + '</div>'
+    + '</div></div>';
+
+  R('root').innerHTML = html;
+}
+
+function toggleCand(candId, vagas) {
+  var cargo = App.cargos[App.step];
+  if (!cargo) return;
+  var sel = (App.votos[cargo.id] || []).slice();
+  var idx = sel.indexOf(candId);
+  if (idx >= 0) {
+    sel.splice(idx, 1);
+  } else if (sel.length < vagas) {
+    sel.push(candId);
+  }
+  App.votos[cargo.id] = sel;
+  render();
+}
+
+function proximoCargo() { App.step++;                             render(); }
+function voltarCargo()  { App.step--;                             render(); }
+function irConfirmar()  { App.tela = 'confirmar';                 render(); }
+function voltarLogin()  { App.tela = 'login';                     render(); }
+function voltarVoto()   { App.step = App.cargos.length - 1; App.tela = 'voto'; render(); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TELA 4 — Confirmação
+// ─────────────────────────────────────────────────────────────────────────────
+function telaConfirmar() {
+  var resumo = '';
+  for (var gi = 0; gi < App.cargos.length; gi++) {
+    var g  = App.cargos[gi];
+    var sv = App.votos[g.id] || [];
+    var itens = '';
+    if (sv.length > 0) {
+      for (var vi = 0; vi < sv.length; vi++) {
+        var found = null;
+        for (var fi = 0; fi < App.cands.length; fi++) {
+          if (App.cands[fi].id === sv[vi]) { found = App.cands[fi]; break; }
+        }
+        itens += '<div style="display:flex;align-items:center;gap:9px;margin-top:5px">'
+          + av(found, 38)
+          + '<p style="font-size:14px;font-weight:700">' + esc(found ? found.nome : '') + '</p>'
+          + '</div>';
+      }
+    } else {
+      itens = '<p style="font-size:13px;color:#aaa;font-style:italic">Voto em branco</p>';
+    }
+    var extra = sv.length > 0 && sv.length < g.vagas
+      ? '<p style="font-size:11px;color:#aaa;margin-top:3px">' + (g.vagas - sv.length) + ' voto(s) em branco</p>'
+      : '';
+    resumo += '<div style="margin-bottom:14px">'
+      + '<p style="font-size:10px;color:#aaa;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">'
+      + esc(g.nome) + '</p>'
+      + itens + extra + '</div>';
+  }
+
+  var html = '<div class="page"><div class="wrap">'
+    + '<div class="box">'
+    + '<h3 style="font-weight:700;font-size:17px;margin-bottom:4px">Confirmar voto?</h3>'
+    + '<p style="font-size:13px;color:#888;margin-bottom:14px">Após confirmar não é possível alterar.</p>'
+    + '<div style="background:#f8f8f6;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12px">'
+    + '<strong>' + esc(App.user.nome) + '</strong>'
+    + ' &nbsp;·&nbsp; CPF: ' + esc(App.user.cpf)
+    + '</div>'
+    + resumo
+    + '<hr style="border:none;border-top:1px solid #eee;margin:12px 0">'
+    + '<div style="display:flex;gap:8px">'
+    + '<button class="btn btn-back" style="max-width:none;flex:1" onclick="voltarVoto()">Revisar</button>'
+    + '<button id="btn-conf" class="btn btn-s" style="flex:1" onclick="acaoConfirmar()">Confirmar ✓</button>'
+    + '</div></div></div></div>';
+
+  R('root').innerHTML = html;
+}
+
+async function acaoConfirmar() {
+  var btn = R('btn-conf');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+
+  try {
+    var resp = await fetch('/api/votar', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ userId: App.user.id, votos: App.votos })
+    });
+    var d = await resp.json();
+
+    if (d.error) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Confirmar ✓'; }
+      alert('Erro: ' + d.error);
+      return;
+    }
+    App.tela = 'fim';
+    render();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirmar ✓'; }
+    alert('Erro de conexão ao registrar voto. Tente novamente.');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TELA 5 — Voto registrado
+// ─────────────────────────────────────────────────────────────────────────────
+function telaFim() {
+  R('root').innerHTML = '<div class="page"><div class="wrap">'
+    + '<div class="box" style="text-align:center;padding:36px 24px">'
+    + '<div style="font-size:68px;margin-bottom:14px">🎉</div>'
+    + '<h2 style="font-weight:700;font-size:20px;margin-bottom:8px">Voto registrado!</h2>'
+    + '<p style="font-size:14px;color:#666;line-height:1.65;margin-bottom:22px">'
+    + 'Obrigado, <strong>' + esc(App.user.nome) + '</strong>.<br>'
+    + 'Seu voto foi computado com sucesso.</p>'
+    + '<button class="btn btn-p" onclick="voltarLogin()">Voltar ao início</button>'
+    + '</div></div></div>';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TELA 6 — Eleição encerrada
+// ─────────────────────────────────────────────────────────────────────────────
+function telaEncerrada() {
+  R('root').innerHTML = '<div class="page"><div class="wrap">'
+    + '<div class="box" style="text-align:center;padding:36px 24px">'
+    + '<div style="font-size:52px;margin-bottom:14px">🔒</div>'
+    + '<h2 style="font-size:18px;font-weight:700;margin-bottom:8px">Eleição encerrada</h2>'
+    + '<p style="font-size:14px;color:#888;line-height:1.6">'
+    + 'Os resultados estão disponíveis<br>no painel administrativo.</p>'
+    + '<button class="btn btn-p" style="margin-top:20px" onclick="voltarLogin()">Voltar</button>'
+    + '</div></div></div>';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boot — carrega configuração e inicia
+// ─────────────────────────────────────────────────────────────────────────────
+(async function boot() {
+  try {
+    var resp = await fetch('/api/state');
+    var d    = await resp.json();
+    App.cfg    = d.config     || {};
+    App.cands  = d.candidatos || [];
+    App.cargos = d.cargos     || [];
+    applyTheme(App.cfg);
+  } catch(e) {
+    console.error('Erro ao carregar estado:', e);
+  }
+  render();
+})();
+</script>
+</body>
+</html>
