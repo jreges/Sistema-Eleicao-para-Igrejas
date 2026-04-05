@@ -303,7 +303,7 @@ function tabUsuarios() {
       <div style="width:34px;height:34px;border-radius:50%;background:var(--pbg);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:var(--p);flex-shrink:0">${esc(u.nome[0])}</div>
       <div style="flex:1;min-width:0">
         <p style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.nome)}</p>
-        <p style="font-size:11px;color:#888">${esc(u.cpf)}${u.email?' · '+esc(u.email):''}</p>
+        <p style="font-size:11px;color:#888">${esc(u.cpf)}</p>
       </div>
       <button class="btn btn-p btn-sm" onclick="editUser('${u.id}')">✏️</button>
       <button class="btn btn-danger btn-sm" onclick="delUser('${u.id}')">×</button>
@@ -318,7 +318,7 @@ function tabUsuarios() {
         <input id="u-cpf" class="input" placeholder="000.000.000-00" maxlength="14">
       </div>
     </div>
-    <div class="field" style="margin-top:10px"><label>E-mail (opcional)</label><input id="u-email" class="input" placeholder="email@exemplo.com"></div>
+
     <div id="u-err" class="err-box" style="display:none"></div>
     <button class="btn btn-p" style="margin-top:4px" onclick="addUser()">+ Adicionar eleitor</button>
   </div>
@@ -327,7 +327,7 @@ function tabUsuarios() {
     <p style="font-size:12px;color:#888;margin-bottom:10px">CSV com colunas: <code>nome,email,cpf</code></p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <label class="btn btn-p" style="cursor:pointer">📂 Importar CSV<input type="file" accept=".csv,.txt" style="display:none" onchange="importCSV(this)"></label>
-      <a class="btn" href="/api/usuarios/exportar" download="eleitores.csv">📤 Exportar CSV</a>
+      <button class="btn" onclick="exportarCSV()">📤 Exportar CSV</button>
     </div>
     <div id="import-msg" style="display:none;margin-top:10px"></div>
   </div>
@@ -341,7 +341,7 @@ function tabUsuarios() {
         <label>CPF <span id="eu-cpf-st" style="font-weight:400;color:#aaa"></span></label>
         <input id="eu-cpf" class="input" maxlength="14">
       </div>
-      <div class="field"><label>E-mail</label><input id="eu-email" class="input"></div>
+
       <div id="eu-err" class="err-box" style="display:none"></div>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn" style="flex:1" onclick="$('modal-edit').style.display='none'">Cancelar</button>
@@ -354,11 +354,10 @@ function tabUsuarios() {
 async function addUser() {
   const nome  = ($('u-nome').value||'').trim();
   const cpf   = ($('u-cpf').value||'').trim();
-  const email = ($('u-email').value||'').trim();
   const e = $('u-err'); e.style.display='none';
   if (!nome||!cpf) { e.textContent='Nome e CPF obrigatórios.'; e.style.display='block'; return; }
   if (!validCPF(cpf)) { e.textContent='CPF inválido. Verifique os dígitos.'; e.style.display='block'; return; }
-  const res = await api.post('/api/usuarios', { nome, email, cpf });
+  const res = await api.post('/api/usuarios', { nome, cpf });
   if (res.error) { e.textContent=res.error; e.style.display='block'; return; }
   toast('Eleitor adicionado!','success'); await renderTab();
 }
@@ -369,7 +368,6 @@ function editUser(id) {
   _editId = id;
   $('eu-nome').value  = u.nome;
   $('eu-cpf').value   = u.cpf;
-  $('eu-email').value = u.email||'';
   $('eu-err').style.display='none';
   $('modal-edit').style.display='flex';
   cpfInput('eu-cpf','eu-cpf-st');
@@ -377,10 +375,9 @@ function editUser(id) {
 async function saveEditUser() {
   const nome  = ($('eu-nome').value||'').trim();
   const cpf   = ($('eu-cpf').value||'').trim();
-  const email = ($('eu-email').value||'').trim();
   const e = $('eu-err'); e.style.display='none';
   if (!nome||!cpf) { e.textContent='Nome e CPF obrigatórios.'; e.style.display='block'; return; }
-  const res = await api.patch('/api/usuarios/'+_editId, { nome, cpf, email });
+  const res = await api.patch('/api/usuarios/'+_editId, { nome, cpf });
   if (res.error) { e.textContent=res.error; e.style.display='block'; return; }
   $('modal-edit').style.display='none';
   toast('Atualizado!','success'); await renderTab();
@@ -418,7 +415,7 @@ function tabPresenca() {
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
     <button class="btn btn-s btn-sm" id="btn-mtodos" onclick="presMarcarTodos()">✓ Marcar todos</button>
     <button class="btn btn-danger btn-sm" id="btn-dtodos" onclick="presDesmarcarTodos()">✗ Desmarcar todos</button>
-    <a class="btn btn-p btn-sm" href="/api/presenca/exportar-xlsx" download="lista-presenca.xlsx">📊 Exportar .xlsx</a>
+    <button class="btn btn-p btn-sm" onclick="exportarPresenca()">📊 Exportar .xlsx</button>
   </div>
   ${alerta}<div>${list}</div>`;
 }
@@ -429,7 +426,6 @@ async function presDesmarcarTodos()  { const b=$('btn-dtodos');if(b){b.disabled=
 // ─── TAB: CANDIDATOS ─────────────────────────────────────────────────────────
 // Candidatos são selecionados a partir dos usuários cadastrados
 const EMOJIS = ['👨','👩','🧑','👨‍💼','👩‍💼','👨‍🦳','👩‍🦳','😊','🧔','👴','👵'];
-let _emoji = '😊';
 
 function tabCandidatos() {
   const candUserIds = S.candidatos.map(c => c.userId);
@@ -440,29 +436,42 @@ function tabCandidatos() {
           <option value="">-- Escolha um membro --</option>
           ${disponiveis.map(u=>`<option value="${esc(u.id)}">${esc(u.nome)} — CPF: ${esc(u.cpf)}</option>`).join('')}
         </select></div>`
-    : `<div class="warn-box">Todos os membros cadastrados já são candidatos, ou não há membros ainda.</div>`;
-  const emojiHtml = EMOJIS.map(e =>
-    `<div onclick="selEmoji('${e}')" style="width:34px;height:34px;border-radius:50%;background:${_emoji===e?'var(--pbg)':'#f5f4ef'};border:1.5px solid ${_emoji===e?'var(--p)':'#ddd'};display:flex;align-items:center;justify-content:center;font-size:19px;cursor:pointer">${e}</div>`
-  ).join('');
-  const list = S.candidatos.map(c => `
+    : `<div class="warn-box">Todos os membros cadastrados já são candidatos, ou não há membros cadastrados.</div>`;
+
+  const list = S.candidatos.map(c => {
+    const temFoto = c.fotoUrl ? true : false;
+    return `
     <div class="card-sm" style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-      ${avHTML(c, 42)}
+      ${c.fotoUrl
+        ? `<img src="${esc(c.fotoUrl)}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;border:1px solid #ddd;flex-shrink:0">`
+        : `<div style="width:48px;height:48px;border-radius:50%;background:#faeeda;display:flex;align-items:center;justify-content:center;font-size:11px;color:#854F0B;text-align:center;flex-shrink:0;line-height:1.2;padding:4px">Sem foto</div>`}
       <div style="flex:1">
         <p style="font-weight:600;font-size:13px">${esc(c.nome)}</p>
         <p style="font-size:11px;color:#888">${c.idade} anos · ${esc((c.desc||'').slice(0,55))}${(c.desc||'').length>55?'...':''}</p>
+        ${!temFoto?`<p style="font-size:10px;color:#a32d2d;font-weight:600">⚠ Foto obrigatória</p>`:''}
       </div>
-      <label class="btn btn-p btn-sm" style="cursor:pointer">📷<input type="file" accept="image/*" style="display:none" onchange="uploadFoto('${c.id}',this)"></label>
+      <label class="btn ${temFoto?'btn-p':'btn-danger'} btn-sm" style="cursor:pointer">
+        ${temFoto?'📷 Trocar':'📷 Adicionar foto'}
+        <input type="file" accept="image/*" style="display:none" onchange="uploadFoto('${c.id}',this)">
+      </label>
       <button class="btn btn-danger btn-sm" onclick="delCand('${c.id}')">×</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+
   return `
   <h3 style="font-weight:700;margin-bottom:14px">Candidatos (${S.candidatos.length})</h3>
+  ${S.candidatos.some(c=>!c.fotoUrl)?'<div class="warn-box" style="margin-bottom:12px">⚠ Candidatos sem foto não aparecerão corretamente nas cédulas de votação. Adicione a foto de cada candidato.</div>':''}
   <div class="card" style="margin-bottom:14px">
-    <p style="font-size:12px;color:#888;margin-bottom:10px">Selecione um membro cadastrado para torná-lo candidato.</p>
+    <p style="font-size:12px;color:#888;margin-bottom:10px">Selecione um membro cadastrado para torná-lo candidato. A foto é obrigatória.</p>
     ${selectHtml}
     <div class="grid2" style="gap:10px;margin-top:10px;margin-bottom:10px">
       <div class="field" style="margin:0"><label>Idade</label><input id="c-idade" class="input" type="number" min="1" placeholder="Idade"></div>
-      <div class="field" style="margin:0"><label>Avatar (sem foto)</label>
-        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">${emojiHtml}</div>
+      <div class="field" style="margin:0"><label>Foto <span style="color:#a32d2d">*</span> (obrigatória)</label>
+        <label class="btn btn-p" style="cursor:pointer;width:fit-content;margin-top:0">
+          📷 Escolher foto
+          <input type="file" id="c-foto-input" accept="image/*" style="display:none" onchange="previewFotoCand(this)">
+        </label>
+        <div id="c-foto-preview" style="margin-top:8px"></div>
       </div>
     </div>
     <div class="field"><label>Histórico / Descrição</label><textarea id="c-desc" class="input" rows="2" placeholder="Breve histórico do candidato..."></textarea></div>
@@ -471,17 +480,34 @@ function tabCandidatos() {
   <div>${list}</div>`;
 }
 
-function selEmoji(e) { _emoji=e; renderTab(); }
+
+
+var _fotoCandFile = null;
+
+function previewFotoCand(input) {
+  const file = input.files[0]; if (!file) return;
+  _fotoCandFile = file;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const prev = $('c-foto-preview');
+    if (prev) prev.innerHTML = '<img src="'+e.target.result+'" style="width:60px;height:60px;border-radius:50%;object-fit:cover;border:2px solid var(--p)">';
+  };
+  reader.readAsDataURL(file);
+}
 
 async function addCand() {
   const userId = $('c-userid') ? ($('c-userid').value||'') : '';
   const idade  = ($('c-idade').value||'').trim();
   const desc   = ($('c-desc').value||'').trim();
-  if (!userId) { toast('Selecione um membro.','warn'); return; }
-  if (!idade)  { toast('Informe a idade.','warn'); return; }
-  const res = await api.post('/api/candidatos', { userId, idade, emoji: _emoji, desc });
+  if (!userId)       { toast('Selecione um membro.','warn'); return; }
+  if (!idade)        { toast('Informe a idade.','warn'); return; }
+  if (!_fotoCandFile){ toast('A foto do candidato é obrigatória.','warn'); return; }
+  const res = await api.post('/api/candidatos', { userId, idade, emoji: '😊', desc });
   if (res.error) { toast(res.error,'danger'); return; }
-  _emoji = '😊';
+  // Upload da foto imediatamente
+  const fr = await api.upload('/api/candidatos/'+res.candidato.id+'/foto', 'foto', _fotoCandFile);
+  if (fr.error) { toast('Candidato criado, mas erro na foto: '+fr.error,'warn'); }
+  _fotoCandFile = null;
   toast('Candidato adicionado!','success'); await renderTab();
 }
 async function uploadFoto(id, input) {
@@ -593,7 +619,7 @@ async function tabResultados() {
     </div>`;
   }).join('');
   return `<h3 style="font-weight:700;margin-bottom:14px">Resultado da Eleição</h3>
-  <div style="margin-bottom:14px"><a class="btn btn-p" href="/api/resultados/exportar-xlsx" download="resultado-eleicao.xlsx">📊 Exportar Relatório (.xlsx)</a></div>
+  <div style="margin-bottom:14px"><button class="btn btn-p" onclick="exportarResultado()">📊 Exportar Relatório (.xlsx)</button></div>
   ${html}`;
 }
 
@@ -695,6 +721,46 @@ function bindTabEvents() {
     hex.addEventListener('input',e=>{if(/^#[0-9a-fA-F]{6}$/.test(e.target.value))pick.value=e.target.value;});
   });
 }
+// ─── Funções de exportação (usa fetch+blob para enviar token no header) ───────
+async function exportarCSV() {
+  try {
+    const resp = await fetch('/api/usuarios/exportar', { headers: authH() });
+    if (!resp.ok) { toast('Erro ao exportar.','danger'); return; }
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'eleitores.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch(e) { toast('Erro ao exportar CSV.','danger'); }
+}
+
+async function exportarPresenca() {
+  try {
+    const resp = await fetch('/api/presenca/exportar-xlsx', { headers: authH() });
+    if (!resp.ok) { toast('Erro ao exportar.','danger'); return; }
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'lista-presenca.xlsx';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch(e) { toast('Erro ao exportar presença.','danger'); }
+}
+
+async function exportarResultado() {
+  try {
+    const resp = await fetch('/api/resultados/exportar-xlsx', { headers: authH() });
+    if (!resp.ok) { toast('Erro ao exportar.','danger'); return; }
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'resultado-eleicao.xlsx';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch(e) { toast('Erro ao exportar resultado.','danger'); }
+}
+
 </script>
 </body>
 </html>

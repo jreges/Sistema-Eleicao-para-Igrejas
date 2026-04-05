@@ -705,8 +705,45 @@ function telaEncerrada() {
   } catch(e) {
     console.error('Erro ao carregar estado:', e);
   }
-  render();
+  // Auto-login: se vier da página de check-in com ?cpf=XXX, loga automaticamente
+  var urlParams = new URLSearchParams(window.location.search);
+  var autoCPF   = urlParams.get('cpf');
+  if (autoCPF) {
+    // Limpa o CPF da URL sem recarregar a página
+    window.history.replaceState({}, '', '/votar');
+    await acaoAutoLogin(autoCPF);
+  } else {
+    render();
+  }
 })();
+
+async function acaoAutoLogin(cpf) {
+  try {
+    var resp = await fetch('/api/login-eleitor', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ cpf: cpf })
+    });
+    var d = await resp.json();
+    if (d.ok && d.user) {
+      App.user  = d.user;
+      App.votos = {};
+      App.step  = 0;
+      if (d.elStatus === 'ativa')        { App.tela = 'voto';      render(); }
+      else if (d.elStatus === 'encerrada') { App.tela = 'encerrada'; render(); }
+      else                               { App.tela = 'espera';    render(); }
+    } else {
+      // Falhou (ex: já votou, não está presente) - mostra login normal com mensagem
+      render();
+      if (d.error) {
+        var errEl = R('login-err');
+        if (errEl) { errEl.textContent = d.error; errEl.style.display = 'block'; }
+      }
+    }
+  } catch(e) {
+    render();
+  }
+}
 </script>
 </body>
 </html>
