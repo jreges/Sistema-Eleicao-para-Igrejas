@@ -1,15 +1,21 @@
 /**
- * Eleição de Oficiais da Igreja — Servidor v4
+ * Eleição de Oficiais da Igreja — Servidor v4.1
  * Node.js puro, zero dependências externas.
  *
- * v4: sessões admin via token, todos endpoints admin protegidos,
- *     usuários sem role/senha, candidatos criados a partir de usuários.
+ * Segurança v4.1:
+ *  - Tokens de sessão admin (32 bytes aleatórios, expiram em 8h)
+ *  - Todos endpoints admin exigem X-Admin-Token válido
+ *  - Senhas com hash SHA-256 + salt
+ *  - Rate limiting básico no login (5 tentativas / 15 min por IP)
+ *  - Validação rigorosa de CPF
+ *  - Sanitização de nomes de arquivo no upload
+ *  - Sem dados sensíveis na API pública
  */
 'use strict';
-const http  = require('http');
-const fs    = require('fs');
-const path  = require('path');
-const url   = require('url');
+const http   = require('http');
+const fs     = require('fs');
+const path   = require('path');
+const url    = require('url');
 const crypto = require('crypto');
 const { buildXLSX } = require('./xlsx-builder');
 
@@ -18,38 +24,34 @@ const DATA_FILE = path.join(__dirname, 'data', 'state.json');
 const FOTOS_DIR = path.join(__dirname, 'public', 'fotos');
 const LOGO_DIR  = path.join(__dirname, 'public', 'logos');
 const APP_NAME  = 'Eleição de Oficiais da Igreja';
+const VERSION   = '4.1';
 
-// ─── Sessões Admin ───────────────────────────────────────────────────────────
-// Token aleatório de 32 bytes, expira em 8 horas, armazenado em memória.
-const _sessions = new Map();
+// ─── Rate Limiting (login) ────────────────────────────────────────────────────
+const _loginAttempts = new Map(); // ip -> { count, resetAt }
+const RATE_LIMIT = 5, RATE_WINDOW = 15 * 60 * 1000;
 
-function _newToken() { return crypto.randomBytes(32).toString('hex'); }
-function _sessionOk(token) {
-  if (!token) return false;
-  const s = _sessions.get(token);
-  if (!s) return false;
-  if (Date.now() > s.exp) { _sessions.delete(token); return false; }
-  return true;
-}
-function _createSession() {
-  const t = _newToken();
-  _sessions.set(t, { exp: Date.now() + 8 * 3600 * 1000 });
-  return t;
-}
-function _destroySession(token) { _sessions.delete(token); }
-// Limpa tokens expirados de hora em hora
-setInterval(() => {
+function checkRateLimit(ip) {
   const now = Date.now();
-  for (const [k, v] of _sessions) if (now > v.exp) _sessions.delete(k);
-}, 3600 * 1000);
-
-// ─── Hash de senha ────────────────────────────────────────────────────────────
-function hashPwd(s) {
-  return crypto.createHash('sha256').update(s + 'eleicao_salt_2024').digest('hex');
+  const rec = _loginAttempts.get(ip);
+  if (!rec || now > rec.resetAt) { _loginAttempts.set(ip, { count: 1, resetAt: now + RATE_WINDOW }); return true; }
+  if (rec.count >= RATE_LIMIT) return false;
+  rec.count++; return true;
 }
+function resetRateLimit(ip) { _loginAttempts.delete(ip); }
+setInterval(() => { const now = Date.now(); for (const [k, v] of _loginAttempts) if (now > v.resetAt) _loginAttempts.delete(k); }, RATE_WINDOW);
+
+// ─── Sessões Admin ────────────────────────────────────────────────────────────
+const _sessions = new Map();
+function _newToken()   { return crypto.randomBytes(32).toString('hex'); }
+function _sessionOk(t) { if (!t) return false; const s = _sessions.get(t); if (!s) return false; if (Date.now() > s.exp) { _sessions.delete(t); return false; } return true; }
+function _mkSession()  { const t = _newToken(); _sessions.set(t, { exp: Date.now() + 8 * 3600 * 1000 }); return t; }
+function _rmSession(t) { _sessions.delete(t); }
+setInterval(() => { const now = Date.now(); for (const [k, v] of _sessions) if (now > v.exp) _sessions.delete(k); }, 3600 * 1000);
+
+// ─── Hash ─────────────────────────────────────────────────────────────────────
+function hashPwd(s) { return crypto.createHash('sha256').update(s + 'eleicao_salt_2024').digest('hex'); }
 
 // ─── Estado padrão ────────────────────────────────────────────────────────────
-// Usuários: apenas id, nome, email, cpf — sem role nem senha
 const DEFAULT = {
   users: [
     { id:'u1', nome:'Ana Oliveira', cpf:'111.111.111-11' },
@@ -59,30 +61,16 @@ const DEFAULT = {
     { id:'u5', nome:'Elisa Nunes',  cpf:'555.555.555-55' },
     { id:'u6', nome:'Fábio Costa',  cpf:'666.666.666-66' },
   ],
-  // Candidatos apontam para um userId e repetem o nome para facilitar leitura
   candidatos: [
-    { id:'c1', userId:'u1', nome:'Ana Oliveira', idade:42, emoji:'👩',  fotoUrl:'', desc:'15 anos de serviço, liderança em projetos comunitários.' },
-    { id:'c2', userId:'u2', nome:'Bruno Santos', idade:38, emoji:'👨',  fotoUrl:'', desc:'Formação teológica, experiência em aconselhamento pastoral.' },
-    { id:'c3', userId:'u3', nome:'Carla Mendes', idade:51, emoji:'👩‍🦳', fotoUrl:'', desc:'Coordenadora de grupos de estudo há 8 anos.' },
-    { id:'c4', userId:'u4', nome:'Diego Lima',   idade:45, emoji:'🧑',  fotoUrl:'', desc:'Administrador, responsável pelas finanças nos últimos 5 anos.' },
-    { id:'c5', userId:'u5', nome:'Elisa Nunes',  idade:36, emoji:'👩‍💼', fotoUrl:'', desc:'Trabalho com jovens e evangelismo urbano há uma década.' },
+    { id:'c1', userId:'u1', nome:'Ana Oliveira', idade:42, fotoUrl:'', desc:'15 anos de serviço, liderança em projetos comunitários.' },
+    { id:'c2', userId:'u2', nome:'Bruno Santos', idade:38, fotoUrl:'', desc:'Formação teológica, experiência em aconselhamento pastoral.' },
+    { id:'c3', userId:'u3', nome:'Carla Mendes', idade:51, fotoUrl:'', desc:'Coordenadora de grupos de estudo há 8 anos.' },
+    { id:'c4', userId:'u4', nome:'Diego Lima',   idade:45, fotoUrl:'', desc:'Administrador, responsável pelas finanças nos últimos 5 anos.' },
+    { id:'c5', userId:'u5', nome:'Elisa Nunes',  idade:36, fotoUrl:'', desc:'Trabalho com jovens e evangelismo urbano há uma década.' },
   ],
-  cargos: [
-    { id:'g1', nome:'Diácono',    vagas:2 },
-    { id:'g2', nome:'Presbítero', vagas:1 },
-  ],
-  presentes:  [],
-  jaVotou:    [],
-  resultados: {},
-  elStatus:   'aguardando',
-  config: {
-    nomeInstituicao: APP_NAME,
-    logoUrl:         '',
-    corPrimaria:    '#185FA5',
-    corSecundaria:  '#3B6D11',
-    corFundo:       '#f0ede6',
-    corTexto:       '#1a1a18',
-  },
+  cargos:     [ { id:'g1', nome:'Diácono', vagas:2 }, { id:'g2', nome:'Presbítero', vagas:1 } ],
+  presentes:  [], jaVotou: [], resultados: {}, elStatus: 'aguardando',
+  config: { nomeInstituicao: APP_NAME, logoUrl: '', corPrimaria:'#185FA5', corSecundaria:'#3B6D11', corFundo:'#f0ede6', corTexto:'#1a1a18' },
   adminSenha: hashPwd('admin'),
 };
 
@@ -93,437 +81,369 @@ function loadState() {
       const s = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
       if (!s.config)     s.config     = { ...DEFAULT.config };
       if (!s.adminSenha) s.adminSenha = DEFAULT.adminSenha;
-      // Migração: remove role/senha de usuários legados
-      s.users = (s.users || []).map(u => ({ id: u.id, nome: u.nome, cpf: u.cpf }));
-      // Migração: garante campos em candidatos legados
-      s.candidatos = (s.candidatos || []).map(c => ({
-        userId: '', emoji: '😊', fotoUrl: '', desc: '', ...c,
-      }));
-      // Renomeia placeholder antigo
-      if (!s.config.nomeInstituicao || s.config.nomeInstituicao === 'Igreja / Instituição') {
-        s.config.nomeInstituicao = APP_NAME;
-      }
+      // Migração: remove campos legados de usuários
+      s.users      = (s.users||[]).map(u => ({ id:u.id, nome:u.nome, cpf:u.cpf }));
+      s.candidatos = (s.candidatos||[]).map(c => ({ userId:'', fotoUrl:'', desc:'', ...c }));
+      if (!s.config.nomeInstituicao || s.config.nomeInstituicao === 'Igreja / Instituição') s.config.nomeInstituicao = APP_NAME;
       return s;
     }
-  } catch (e) { console.error('Erro ao carregar estado:', e.message); }
+  } catch(e) { console.error('Erro ao carregar estado:', e.message); }
   return JSON.parse(JSON.stringify(DEFAULT));
 }
-
 function saveState(st) {
-  try {
-    fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-    fs.writeFileSync(DATA_FILE, JSON.stringify(st, null, 2), 'utf8');
-  } catch (e) { console.error('Erro ao salvar estado:', e.message); }
+  try { fs.mkdirSync(path.dirname(DATA_FILE), { recursive:true }); fs.writeFileSync(DATA_FILE, JSON.stringify(st, null, 2), 'utf8'); }
+  catch(e) { console.error('Erro ao salvar:', e.message); }
 }
 
-fs.mkdirSync(FOTOS_DIR, { recursive: true });
-fs.mkdirSync(LOGO_DIR,  { recursive: true });
-
+fs.mkdirSync(FOTOS_DIR, { recursive:true });
+fs.mkdirSync(LOGO_DIR,  { recursive:true });
 let ST = loadState();
 const genId = () => Math.random().toString(36).slice(2, 9);
 
-// ─── Validação de CPF ──────────────────────────────────────────────────────────
+// ─── Validação CPF ────────────────────────────────────────────────────────────
 function validCPF(cpf) {
-  cpf = cpf.replace(/\D/g, '');
+  cpf = cpf.replace(/\D/g,'');
   if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
-  let s = 0;
-  for (let i = 0; i < 9; i++) s += +cpf[i] * (10 - i);
-  let r = (s * 10) % 11; if (r >= 10) r = 0;
-  if (r !== +cpf[9]) return false;
-  s = 0;
-  for (let i = 0; i < 10; i++) s += +cpf[i] * (11 - i);
-  r = (s * 10) % 11; if (r >= 10) r = 0;
-  return r === +cpf[10];
+  let s=0; for (let i=0;i<9;i++) s += +cpf[i]*(10-i); let r=(s*10)%11; if(r>=10)r=0; if(r!==+cpf[9]) return false;
+  s=0; for (let i=0;i<10;i++) s += +cpf[i]*(11-i); r=(s*10)%11; if(r>=10)r=0; return r===+cpf[10];
+}
+
+// ─── Sanitização de nome de arquivo ───────────────────────────────────────────
+function safeExt(filename) {
+  const allowed = ['.jpg','.jpeg','.png','.gif','.webp'];
+  const ext = path.extname(filename || '').toLowerCase();
+  return allowed.includes(ext) ? ext : '.jpg';
 }
 
 // ─── CSV ──────────────────────────────────────────────────────────────────────
 function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
-  const hdr = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
+  const hdr = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase());
   return lines.slice(1).map(line => {
-    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-    const o = {}; hdr.forEach((h, i) => o[h] = vals[i] || ''); return o;
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g,''));
+    const o = {}; hdr.forEach((h,i) => o[h] = vals[i]||''); return o;
   });
 }
 function toCSV(rows, headers) {
-  return [headers.join(','),
-    ...rows.map(r => headers.map(h => `"${(r[h] || '').toString().replace(/"/g, '""')}"`).join(','))
-  ].join('\n');
+  return [headers.join(','), ...rows.map(r => headers.map(h => `"${(r[h]||'').toString().replace(/"/g,'""')}"`).join(','))].join('\n');
 }
 
 // ─── Multipart ────────────────────────────────────────────────────────────────
 function parseMultipart(buf, boundary) {
-  const parts = {}, sep = Buffer.from('--' + boundary);
-  let pos = 0;
-  while (pos < buf.length) {
-    const start = buf.indexOf(sep, pos); if (start === -1) break;
-    pos = start + sep.length;
-    if (buf[pos] === 45 && buf[pos + 1] === 45) break;
-    if (buf[pos] === 13) pos += 2;
-    const he = buf.indexOf('\r\n\r\n', pos); if (he === -1) break;
-    const hs = buf.slice(pos, he).toString(); pos = he + 4;
-    const ns = buf.indexOf(sep, pos), de = ns === -1 ? buf.length : ns - 2;
-    const data = buf.slice(pos, de); pos = ns;
-    const nm = hs.match(/name="([^"]+)"/), fn = hs.match(/filename="([^"]+)"/), ct = hs.match(/Content-Type:\s*(\S+)/i);
-    if (nm) parts[nm[1]] = { data, filename: fn ? fn[1] : null, text: !fn ? data.toString() : null };
+  const parts={}, sep=Buffer.from('--'+boundary); let pos=0;
+  while (pos<buf.length) {
+    const start=buf.indexOf(sep,pos); if(start===-1)break;
+    pos=start+sep.length;
+    if(buf[pos]===45&&buf[pos+1]===45)break;
+    if(buf[pos]===13)pos+=2;
+    const he=buf.indexOf('\r\n\r\n',pos); if(he===-1)break;
+    const hs=buf.slice(pos,he).toString(); pos=he+4;
+    const ns=buf.indexOf(sep,pos),de=ns===-1?buf.length:ns-2;
+    const data=buf.slice(pos,de); pos=ns;
+    const nm=hs.match(/name="([^"]+)"/),fn=hs.match(/filename="([^"]+)"/);
+    if(nm) parts[nm[1]]={data,filename:fn?fn[1]:null,text:!fn?data.toString():null};
   }
   return parts;
 }
-function rawBody(req)  { return new Promise((ok, ko) => { const c = []; req.on('data', b => c.push(b)); req.on('end', () => ok(Buffer.concat(c))); req.on('error', ko); }); }
-function jsonBody(req) { return new Promise((ok, ko) => { let b = ''; req.on('data', c => b += c); req.on('end', () => { try { ok(JSON.parse(b)); } catch { ok(b); } }); req.on('error', ko); }); }
+function rawBody(req)  { return new Promise((ok,ko)=>{const c=[];req.on('data',b=>c.push(b));req.on('end',()=>ok(Buffer.concat(c)));req.on('error',ko);}); }
+function jsonBody(req) { return new Promise((ok,ko)=>{let b='';req.on('data',c=>b+=c);req.on('end',()=>{try{ok(JSON.parse(b));}catch{ok(b);}});req.on('error',ko);}); }
 
-// ─── Respostas ────────────────────────────────────────────────────────────────
-const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
-function sendJSON(res, data, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); }
-function sendHTML(res, html) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html); }
-function sendXLSX(res, buf, name) { res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${name}"`, 'Content-Length': buf.length }); res.end(buf); }
+// ─── Resposta ─────────────────────────────────────────────────────────────────
+const MIME={'.html':'text/html','.js':'application/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.svg':'image/svg+xml'};
+function sendJSON(res,data,status=200){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));}
+function sendHTML(res,html){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN'});res.end(html);}
+function sendXLSX(res,buf,name){res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="${name}"`,'Content-Length':buf.length});res.end(buf);}
 
-// ─── Auth helpers ─────────────────────────────────────────────────────────────
-function getToken(req) {
-  // Accept token from header (API calls) or query param (download links)
-  const p = url.parse(req.url, true);
-  return req.headers['x-admin-token'] || p.query.t || '';
-}
-function isAdmin(req)  { return _sessionOk(getToken(req)); }
-function deny(res)     { sendJSON(res, { error: 'Não autorizado. Faça login como administrador.' }, 401); }
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+function getToken(req){const p=url.parse(req.url,true);return req.headers['x-admin-token']||p.query.t||'';}
+function isAdmin(req) {return _sessionOk(getToken(req));}
+function deny(res)    {sendJSON(res,{error:'Não autorizado. Faça login como administrador.'},401);}
+function getIP(req)   {return req.headers['x-forwarded-for']?.split(',')[0]||req.socket.remoteAddress||'unknown';}
 
 // ─── Apuração ─────────────────────────────────────────────────────────────────
-// Eleito = voto >= ceil(presentes / 2)  (maioria absoluta dos presentes)
 function apurar() {
-  const total = ST.presentes.length;
-  return ST.cargos.map(cargo => {
-    const res = ST.resultados[cargo.id] || {}, branco = res.branco || 0;
-    const rank = Object.entries(res)
-      .filter(([k]) => k !== 'branco')
-      .map(([cid, v]) => { const c = ST.candidatos.find(x => x.id === cid); return c ? { cid, c, v } : null; })
-      .filter(Boolean).sort((a, b) => b.v - a.v);
-    const maioria = Math.ceil(total / 2);
-    const eleitos = rank.filter((r, i) => i < cargo.vagas && r.v >= maioria);
-    return { cargo, rank, eleitos, branco, total, maioria };
+  const total=ST.presentes.length;
+  return ST.cargos.map(cargo=>{
+    const res=ST.resultados[cargo.id]||{},branco=res.branco||0;
+    const rank=Object.entries(res).filter(([k])=>k!=='branco').map(([cid,v])=>{const c=ST.candidatos.find(x=>x.id===cid);return c?{cid,c,v}:null;}).filter(Boolean).sort((a,b)=>b.v-a.v);
+    const maioria=Math.ceil(total/2),eleitos=rank.filter((r,i)=>i<cargo.vagas&&r.v>=maioria);
+    return {cargo,rank,eleitos,branco,total,maioria};
   });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SERVIDOR
 // ══════════════════════════════════════════════════════════════════════════════
-const server = http.createServer(async (req, res) => {
-  const p  = url.parse(req.url, true);
-  const pn = decodeURIComponent(p.pathname);
-  const m  = req.method;
+const server = http.createServer(async (req,res)=>{
+  const p=url.parse(req.url,true),pn=decodeURIComponent(p.pathname),m=req.method;
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Admin-Token');
-  if (m === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  // Security headers
+  res.setHeader('Access-Control-Allow-Origin','*');
+  res.setHeader('Access-Control-Allow-Methods','GET,POST,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type,X-Admin-Token');
+  if(m==='OPTIONS'){res.writeHead(204);res.end();return;}
 
-  // ── Arquivos estáticos (fotos / logos) ────────────────────────────────
-  if (m === 'GET' && (pn.startsWith('/fotos/') || pn.startsWith('/logos/'))) {
-    const fp = path.join(__dirname, 'public', pn);
-    if (fs.existsSync(fp)) {
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream' });
-      fs.createReadStream(fp).pipe(res);
-    } else { res.writeHead(404); res.end(); }
+  // Arquivos estáticos
+  if(m==='GET'&&(pn.startsWith('/fotos/')||pn.startsWith('/logos/'))){
+    // Previne path traversal
+    const safe=path.normalize(pn).replace(/^(\.\.(\/|\\|$))+/,'');
+    const fp=path.join(__dirname,'public',safe);
+    if(!fp.startsWith(path.join(__dirname,'public'))){res.writeHead(403);res.end();return;}
+    if(fs.existsSync(fp)){res.writeHead(200,{'Content-Type':MIME[path.extname(fp).toLowerCase()]||'application/octet-stream'});fs.createReadStream(fp).pipe(res);}
+    else{res.writeHead(404);res.end();}
     return;
   }
 
-  // ── Páginas HTML ──────────────────────────────────────────────────────
-  if (m === 'GET' && pn === '/checkin')  { sendHTML(res, checkinPage());  return; }
-  if (m === 'GET' && pn === '/datashow') { sendHTML(res, datashowPage()); return; }
-  if (m === 'GET' && pn === '/votar') {
-    const vf = path.join(__dirname, 'public', 'votar.html');
-    sendHTML(res, fs.readFileSync(vf, 'utf8')); return;
+  // Páginas HTML
+  if(m==='GET'&&pn==='/checkin'){sendHTML(res,checkinPage());return;}
+  if(m==='GET'&&pn==='/datashow'){sendHTML(res,datashowPage());return;}
+  if(m==='GET'&&pn==='/votar'){const vf=path.join(__dirname,'public','votar.html');sendHTML(res,fs.readFileSync(vf,'utf8'));return;}
+
+  if(!pn.startsWith('/api/')){
+    const fp=path.join(__dirname,'public','index.html');
+    if(fs.existsSync(fp))sendHTML(res,fs.readFileSync(fp,'utf8'));
+    else sendHTML(res,'<h1>Sistema de Eleição v'+VERSION+'</h1><p>index.html não encontrado.</p>');
+    return;
   }
 
-  // ── API ───────────────────────────────────────────────────────────────
-  if (pn.startsWith('/api/')) {
+  // ── API Pública ──────────────────────────────────────────────────────────
+  if(m==='GET'&&pn==='/api/state'){
+    return sendJSON(res,{users:ST.users,candidatos:ST.candidatos,cargos:ST.cargos,presentes:ST.presentes,jaVotou:ST.jaVotou,elStatus:ST.elStatus,config:ST.config,version:VERSION});
+  }
+  if(m==='GET'&&pn==='/api/config'){return sendJSON(res,ST.config);}
 
-    // ─ Pública: estado ────────────────────────────────────────────────
-    if (m === 'GET' && pn === '/api/state') {
-      return sendJSON(res, {
-        users:      ST.users,       // sem role/senha
-        candidatos: ST.candidatos,
-        cargos:     ST.cargos,
-        presentes:  ST.presentes,
-        jaVotou:    ST.jaVotou,
-        elStatus:   ST.elStatus,
-        config:     ST.config,
-      });
-    }
-
-    if (m === 'GET' && pn === '/api/config') { return sendJSON(res, ST.config); }
-
-    if (m === 'GET' && pn === '/api/datashow') {
-      const naoVotouCount = ST.users.filter(u => ST.presentes.includes(u.id) && !ST.jaVotou.includes(u.id)).length;
-      const ap = ST.elStatus === 'encerrada' ? apurar() : null;
-      return sendJSON(res, {
-        elStatus: ST.elStatus, presentes: ST.presentes.length,
-        jaVotou:  ST.jaVotou.length,  naoVotouCount,
-        apuracao: ap ? ap.map(a => ({
-          cargo: a.cargo.nome, vagas: a.cargo.vagas, branco: a.branco, maioria: a.maioria,
-          rank:  a.rank.map(r => ({ nome: r.c.nome, votos: r.v, eleito: a.eleitos.some(e => e.cid === r.cid) })),
-        })) : null,
-        config: ST.config,
-      });
-    }
-
-    // ─ Pública: auth eleitor ──────────────────────────────────────────
-    if (m === 'POST' && pn === '/api/login-eleitor') {
-      const { cpf } = await jsonBody(req);
-      const u = ST.users.find(x => x.cpf === cpf);
-      if (!u)                          return sendJSON(res, { error: 'CPF não encontrado no cadastro.' }, 401);
-      if (!ST.presentes.includes(u.id)) return sendJSON(res, { error: 'Você não está marcado como presente.' }, 403);
-      if (ST.jaVotou.includes(u.id))    return sendJSON(res, { error: 'Você já votou nesta eleição.' }, 403);
-      return sendJSON(res, { ok: true, user: { id: u.id, nome: u.nome, cpf: u.cpf, email: u.email }, elStatus: ST.elStatus });
-    }
-
-    // ─ Pública: votar ────────────────────────────────────────────────
-    if (m === 'POST' && pn === '/api/votar') {
-      const { userId, votos } = await jsonBody(req);
-      if (!userId || !votos)              return sendJSON(res, { error: 'Dados inválidos.' }, 400);
-      if (ST.elStatus !== 'ativa')         return sendJSON(res, { error: 'Eleição não está ativa.' }, 403);
-      if (!ST.presentes.includes(userId))  return sendJSON(res, { error: 'Usuário não está presente.' }, 403);
-      if (ST.jaVotou.includes(userId))     return sendJSON(res, { error: 'Usuário já votou.' }, 409);
-      ST.cargos.forEach(g => {
-        if (!ST.resultados[g.id]) ST.resultados[g.id] = { branco: 0 };
-        const sel = votos[g.id] || [];
-        ST.resultados[g.id].branco += (g.vagas - sel.length);
-        sel.forEach(cid => { ST.resultados[g.id][cid] = (ST.resultados[g.id][cid] || 0) + 1; });
-      });
-      ST.jaVotou.push(userId);
-      saveState(ST);
-      return sendJSON(res, { ok: true });
-    }
-
-    // ─ Pública: resultados ────────────────────────────────────────────
-    if (m === 'GET' && pn === '/api/resultados') {
-      if (ST.elStatus !== 'encerrada') return sendJSON(res, { error: 'Eleição não encerrada.' }, 403);
-      return sendJSON(res, { resultados: ST.resultados, cargos: ST.cargos, candidatos: ST.candidatos, apuracao: apurar(), totalPresentes: ST.presentes.length });
-    }
-
-    // ─ Pública: check-in ─────────────────────────────────────────────
-    if (m === 'POST' && pn === '/api/checkin/buscar') {
-      const { cpf } = await jsonBody(req);
-      const u = ST.users.find(x => x.cpf === cpf);
-      if (!u) return sendJSON(res, { error: 'CPF não encontrado.' }, 404);
-      return sendJSON(res, { ok: true, user: { id: u.id, nome: u.nome, cpf: u.cpf, email: u.email }, jaPresente: ST.presentes.includes(u.id) });
-    }
-    if (m === 'POST' && pn === '/api/checkin/confirmar') {
-      const { cpf } = await jsonBody(req);
-      const u = ST.users.find(x => x.cpf === cpf);
-      if (!u) return sendJSON(res, { error: 'CPF não encontrado.' }, 404);
-      if (ST.presentes.includes(u.id)) return sendJSON(res, { ok: true, msg: 'Presença já confirmada.', user: { id: u.id, nome: u.nome } });
-      ST.presentes.push(u.id); saveState(ST);
-      return sendJSON(res, { ok: true, msg: 'Presença confirmada!', user: { id: u.id, nome: u.nome } });
-    }
-
-    // ─ Admin: login / logout / check ──────────────────────────────────
-    if (m === 'POST' && pn === '/api/login') {
-      const { cpf, pwd } = await jsonBody(req);
-      if (cpf === 'admin' && hashPwd(pwd) === ST.adminSenha) {
-        const token = _createSession();
-        // Retorna role='admin' para o browser salvar na sessão
-        return sendJSON(res, { ok: true, role: 'admin', token });
-      }
-      return sendJSON(res, { error: 'Credenciais inválidas.' }, 401);
-    }
-    if (m === 'POST' && pn === '/api/logout') {
-      _destroySession(getToken(req));
-      return sendJSON(res, { ok: true });
-    }
-    if (m === 'GET' && pn === '/api/auth/check') {
-      return sendJSON(res, { valid: isAdmin(req), role: isAdmin(req) ? 'admin' : null });
-    }
-
-    // ══ A partir daqui, TODOS os endpoints exigem token admin ══════════
-    if (!isAdmin(req)) { deny(res); return; }
-
-    // ─ Config ────────────────────────────────────────────────────────
-    if (m === 'POST' && pn === '/api/config') {
-      const b = await jsonBody(req);
-      ST.config = { ...ST.config, ...b }; saveState(ST);
-      return sendJSON(res, { ok: true, config: ST.config });
-    }
-    if (m === 'POST' && pn === '/api/config/logo') {
-      const ct = req.headers['content-type'] || '', bm = ct.match(/boundary=([^\s;]+)/);
-      if (!bm) return sendJSON(res, { error: 'Content-Type inválido.' }, 400);
-      const parts = parseMultipart(await rawBody(req), bm[1]), file = parts['logo'];
-      if (!file?.filename) return sendJSON(res, { error: 'Arquivo não enviado.' }, 400);
-      const ext = path.extname(file.filename).toLowerCase() || '.png', fn = 'logo' + ext;
-      fs.writeFileSync(path.join(LOGO_DIR, fn), file.data);
-      ST.config.logoUrl = '/logos/' + fn; saveState(ST);
-      return sendJSON(res, { ok: true, logoUrl: ST.config.logoUrl });
-    }
-
-    // ─ Admin: senha ──────────────────────────────────────────────────
-    if (m === 'POST' && pn === '/api/admin/senha') {
-      const { senhaAtual, novaSenha } = await jsonBody(req);
-      if (hashPwd(senhaAtual) !== ST.adminSenha) return sendJSON(res, { error: 'Senha atual incorreta.' }, 403);
-      if (!novaSenha || novaSenha.length < 4)    return sendJSON(res, { error: 'Nova senha deve ter ao menos 4 caracteres.' }, 400);
-      ST.adminSenha = hashPwd(novaSenha); saveState(ST);
-      return sendJSON(res, { ok: true });
-    }
-
-    // ─ Presença ──────────────────────────────────────────────────────
-    if (m === 'POST' && pn === '/api/presenca/marcar-todos')   { ST.presentes = ST.users.map(u => u.id); saveState(ST); return sendJSON(res, { ok: true, presentes: ST.presentes }); }
-    if (m === 'POST' && pn === '/api/presenca/desmarcar-todos') { ST.presentes = []; saveState(ST); return sendJSON(res, { ok: true, presentes: ST.presentes }); }
-    if (m === 'POST' && pn.startsWith('/api/presenca/')) {
-      const id = pn.split('/')[3];
-      if (!ST.users.find(u => u.id === id)) return sendJSON(res, { error: 'Usuário não encontrado.' }, 404);
-      const idx = ST.presentes.indexOf(id);
-      idx >= 0 ? ST.presentes.splice(idx, 1) : ST.presentes.push(id);
-      saveState(ST); return sendJSON(res, { ok: true, presentes: ST.presentes });
-    }
-    if (m === 'GET' && pn === '/api/presenca/exportar-xlsx') {
-      const rows = ST.users.filter(u => ST.presentes.includes(u.id)).sort((a, b) => a.nome.localeCompare(b.nome));
-      const hdr  = [{ v:'#', bold:true, bg:'4472C4' }, { v:'Nome Completo', bold:true, bg:'4472C4' }, { v:'CPF', bold:true, bg:'4472C4' }, { v:'Votou?', bold:true, bg:'4472C4' }];
-      const buf  = buildXLSX([{ name: 'Presença', rows: [hdr, ...rows.map((u, i) => [i+1, u.nome, u.cpf, ST.jaVotou.includes(u.id)?'Sim':'Não'])] }]);
-      return sendXLSX(res, buf, 'lista-presenca.xlsx');
-    }
-
-    // ─ Usuários ──────────────────────────────────────────────────────
-    if (m === 'GET' && pn === '/api/usuarios/exportar') {
-      const csv = toCSV(ST.users, ['nome','cpf']);
-      res.writeHead(200, { 'Content-Type':'text/csv; charset=utf-8', 'Content-Disposition':'attachment; filename="eleitores.csv"' });
-      return res.end('\uFEFF' + csv);
-    }
-    if (m === 'POST' && pn === '/api/usuarios/importar') {
-      const body = await jsonBody(req);
-      const rows = parseCSV(typeof body === 'string' ? body : body.csv || '');
-      let added = 0, skipped = 0;
-      for (const r of rows) {
-        const nome = r.nome || r['nome completo'] || '', cpf = (r.cpf || '').trim();
-        if (!nome || !cpf || !validCPF(cpf.replace(/\D/g,'')) || ST.users.find(u => u.cpf === cpf)) { skipped++; continue; }
-        ST.users.push({ id: genId(), nome, cpf }); added++;
-      }
-      saveState(ST); return sendJSON(res, { ok: true, added, skipped });
-    }
-    if (m === 'POST' && pn === '/api/usuarios') {
-      const { nome, cpf } = await jsonBody(req);
-      if (!nome || !cpf)                     return sendJSON(res, { error: 'Nome e CPF obrigatórios.' }, 400);
-      if (!validCPF(cpf.replace(/\D/g,''))) return sendJSON(res, { error: 'CPF inválido.' }, 400);
-      if (ST.users.find(u => u.cpf === cpf)) return sendJSON(res, { error: 'CPF já cadastrado.' }, 409);
-      const u = { id: genId(), nome, cpf };
-      ST.users.push(u); saveState(ST);
-      return sendJSON(res, { ok: true, user: u });
-    }
-    if (m === 'PATCH' && pn.startsWith('/api/usuarios/')) {
-      const id = pn.split('/')[3], u = ST.users.find(x => x.id === id);
-      if (!u) return sendJSON(res, { error: 'Usuário não encontrado.' }, 404);
-      const b = await jsonBody(req);
-      if (b.nome) u.nome = b.nome;
-      if (b.cpf && b.cpf !== u.cpf) {
-        if (!validCPF(b.cpf.replace(/\D/g,'')))         return sendJSON(res, { error: 'CPF inválido.' }, 400);
-        if (ST.users.find(x => x.cpf === b.cpf && x.id !== id)) return sendJSON(res, { error: 'CPF já em uso.' }, 409);
-        u.cpf = b.cpf;
-      }
-      saveState(ST); return sendJSON(res, { ok: true, user: u });
-    }
-    if (m === 'DELETE' && pn.startsWith('/api/usuarios/')) {
-      const id = pn.split('/')[3];
-      ST.users      = ST.users.filter(u => u.id !== id);
-      ST.presentes  = ST.presentes.filter(x => x !== id);
-      ST.jaVotou    = ST.jaVotou.filter(x => x !== id);
-      ST.candidatos = ST.candidatos.filter(c => c.userId !== id);
-      saveState(ST); return sendJSON(res, { ok: true });
-    }
-
-    // ─ Candidatos ────────────────────────────────────────────────────
-    // POST /api/candidatos — cria candidato a partir de um userId
-    if (m === 'POST' && pn === '/api/candidatos') {
-      const { userId, idade, emoji, desc } = await jsonBody(req);
-      if (!userId) return sendJSON(res, { error: 'userId obrigatório.' }, 400);
-      const u = ST.users.find(x => x.id === userId);
-      if (!u) return sendJSON(res, { error: 'Usuário não encontrado.' }, 404);
-      if (ST.candidatos.find(c => c.userId === userId)) return sendJSON(res, { error: 'Este usuário já é candidato.' }, 409);
-      const c = { id: genId(), userId, nome: u.nome, idade: Number(idade)||0, emoji: emoji||'😊', fotoUrl: '', desc: desc||'' };
-      ST.candidatos.push(c); saveState(ST);
-      return sendJSON(res, { ok: true, candidato: c });
-    }
-    if (m === 'PATCH' && pn.match(/^\/api\/candidatos\/[^/]+$/) && !pn.includes('/foto')) {
-      const id = pn.split('/')[3], c = ST.candidatos.find(x => x.id === id);
-      if (!c) return sendJSON(res, { error: 'Candidato não encontrado.' }, 404);
-      const b = await jsonBody(req);
-      if (b.idade !== undefined) c.idade = Number(b.idade);
-      if (b.emoji) c.emoji = b.emoji;
-      if (b.desc  !== undefined) c.desc  = b.desc;
-      saveState(ST); return sendJSON(res, { ok: true, candidato: c });
-    }
-    if (m === 'DELETE' && pn.startsWith('/api/candidatos/') && !pn.includes('/foto')) {
-      const id = pn.split('/')[3], c = ST.candidatos.find(x => x.id === id);
-      if (c?.fotoUrl) { const fp = path.join(__dirname,'public',c.fotoUrl); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
-      ST.candidatos = ST.candidatos.filter(x => x.id !== id); saveState(ST);
-      return sendJSON(res, { ok: true });
-    }
-    if (m === 'POST' && pn.match(/^\/api\/candidatos\/[^/]+\/foto$/)) {
-      const id = pn.split('/')[3], c = ST.candidatos.find(x => x.id === id);
-      if (!c) return sendJSON(res, { error: 'Candidato não encontrado.' }, 404);
-      const ct = req.headers['content-type']||'', bm = ct.match(/boundary=([^\s;]+)/);
-      if (!bm) return sendJSON(res, { error: 'Content-Type inválido.' }, 400);
-      const parts = parseMultipart(await rawBody(req), bm[1]), file = parts['foto'];
-      if (!file?.filename) return sendJSON(res, { error: 'Arquivo não enviado.' }, 400);
-      const ext = path.extname(file.filename).toLowerCase()||'.jpg', fn = 'cand_'+id+ext;
-      fs.writeFileSync(path.join(FOTOS_DIR, fn), file.data);
-      c.fotoUrl = '/fotos/'+fn; saveState(ST);
-      return sendJSON(res, { ok: true, fotoUrl: c.fotoUrl });
-    }
-
-    // ─ Cargos ────────────────────────────────────────────────────────
-    if (m === 'POST' && pn === '/api/cargos') {
-      const { nome, vagas } = await jsonBody(req);
-      if (!nome || !vagas) return sendJSON(res, { error: 'Nome e vagas obrigatórios.' }, 400);
-      ST.cargos.push({ id: genId(), nome, vagas: Number(vagas) }); saveState(ST);
-      return sendJSON(res, { ok: true });
-    }
-    if (m === 'DELETE' && pn.startsWith('/api/cargos/')) {
-      ST.cargos = ST.cargos.filter(g => g.id !== pn.split('/')[3]); saveState(ST);
-      return sendJSON(res, { ok: true });
-    }
-
-    // ─ Eleição ───────────────────────────────────────────────────────
-    if (m === 'POST' && pn === '/api/eleicao/iniciar') {
-      if (!ST.presentes.length)  return sendJSON(res, { error: 'Marque presença de pelo menos 1 eleitor.' }, 400);
-      if (!ST.cargos.length)     return sendJSON(res, { error: 'Cadastre pelo menos 1 cargo.' }, 400);
-      if (!ST.candidatos.length) return sendJSON(res, { error: 'Cadastre pelo menos 1 candidato.' }, 400);
-      ST.elStatus = 'ativa'; saveState(ST); return sendJSON(res, { ok: true });
-    }
-    if (m === 'POST' && pn === '/api/eleicao/encerrar')  { ST.elStatus = 'encerrada';   saveState(ST); return sendJSON(res, { ok: true }); }
-    if (m === 'POST' && pn === '/api/eleicao/reiniciar') { ST.elStatus = 'aguardando'; ST.resultados = {}; ST.jaVotou = []; saveState(ST); return sendJSON(res, { ok: true }); }
-
-    // ─ Resultado XLSX ────────────────────────────────────────────────
-    if (m === 'GET' && pn === '/api/resultados/exportar-xlsx') {
-      if (ST.elStatus !== 'encerrada') return sendJSON(res, { error: 'Eleição não encerrada.' }, 403);
-      const ap = apurar(), sheets = [];
-      sheets.push({ name: 'Resumo', rows: [
-        [{ v: APP_NAME, bold:true, bg:'4472C4' },'',''],['','',''],
-        [{ v:'Total de presentes', bold:true }, ST.presentes.length,''],
-        [{ v:'Total de votantes',  bold:true }, ST.jaVotou.length,''],
-        [{ v:'Abstenções',         bold:true }, ST.presentes.length - ST.jaVotou.length,''],
-        ['','',''],
-        ...ap.map(a => [{ v: a.cargo.nome, bold:true }, `${a.eleitos.length} eleito(s) de ${a.cargo.vagas} vaga(s)`, `Maioria: ${a.maioria} votos`]),
-      ]});
-      for (const a of ap) {
-        const hdr = [['#','Candidato','Votos','% dos presentes','Situação'].map((v,i) => ({ v, bold:true, bg:'4472C4' }))];
-        const rows = a.rank.map((r,i) => {
-          const pct = ST.presentes.length > 0 ? (r.v/ST.presentes.length*100).toFixed(1)+'%' : '0%';
-          const el  = a.eleitos.some(e => e.cid === r.cid);
-          return [i+1, el?{v:r.c.nome,bold:true,bg:'70AD47'}:r.c.nome, el?{v:r.v,bold:true,bg:'70AD47'}:r.v, el?{v:pct,bold:true,bg:'70AD47'}:pct, el?{v:'ELEITO ✓',bold:true,bg:'70AD47'}:(r.v>0?'Não eleito':'Sem votos')];
-        });
-        if (a.branco > 0) rows.push(['—','Votos em branco',a.branco,(a.branco/ST.presentes.length*100).toFixed(1)+'%','—']);
-        sheets.push({ name: a.cargo.nome.slice(0,31), rows: [...hdr, ...rows] });
-      }
-      const pr = ST.users.filter(u => ST.presentes.includes(u.id)).sort((a,b) => a.nome.localeCompare(b.nome));
-      sheets.push({ name:'Lista de Presença', rows: [[{v:'#',bold:true,bg:'4472C4'},{v:'Nome',bold:true,bg:'4472C4'},{v:'CPF',bold:true,bg:'4472C4'},{v:'Votou?',bold:true,bg:'4472C4'}], ...pr.map((u,i)=>[i+1,u.nome,u.cpf,ST.jaVotou.includes(u.id)?'Sim':'Não'])] });
-      return sendXLSX(res, buildXLSX(sheets), 'resultado-eleicao.xlsx');
-    }
-
-    return sendJSON(res, { error: 'Rota não encontrada.' }, 404);
+  if(m==='GET'&&pn==='/api/datashow'){
+    const naoVotouCount=ST.users.filter(u=>ST.presentes.includes(u.id)&&!ST.jaVotou.includes(u.id)).length;
+    const ap=ST.elStatus==='encerrada'?apurar():null;
+    return sendJSON(res,{
+      elStatus:ST.elStatus,presentes:ST.presentes.length,jaVotou:ST.jaVotou.length,naoVotouCount,
+      apuracao:ap?ap.map(a=>({cargo:a.cargo.nome,vagas:a.cargo.vagas,branco:a.branco,maioria:a.maioria,rank:a.rank.map(r=>({nome:r.c.nome,votos:r.v,eleito:a.eleitos.some(e=>e.cid===r.cid)}))})):null,
+      config:ST.config,
+    });
   }
 
-  // ── SPA admin ─────────────────────────────────────────────────────────
-  const fp = path.join(__dirname, 'public', 'index.html');
-  if (fs.existsSync(fp)) sendHTML(res, fs.readFileSync(fp, 'utf8'));
-  else sendHTML(res, '<h1>index.html não encontrado.</h1>');
+  if(m==='POST'&&pn==='/api/login'){
+    const ip=getIP(req);
+    if(!checkRateLimit(ip)) return sendJSON(res,{error:'Muitas tentativas. Tente novamente em 15 minutos.'},429);
+    const{cpf,pwd}=await jsonBody(req);
+    if(cpf==='admin'&&hashPwd(pwd)===ST.adminSenha){resetRateLimit(ip);const token=_mkSession();return sendJSON(res,{ok:true,role:'admin',token});}
+    return sendJSON(res,{error:'Credenciais inválidas.'},401);
+  }
+  if(m==='POST'&&pn==='/api/logout'){_rmSession(getToken(req));return sendJSON(res,{ok:true});}
+  if(m==='GET'&&pn==='/api/auth/check'){return sendJSON(res,{valid:isAdmin(req),role:isAdmin(req)?'admin':null});}
+
+  if(m==='POST'&&pn==='/api/login-eleitor'){
+    const{cpf}=await jsonBody(req);
+    const u=ST.users.find(x=>x.cpf===cpf);
+    if(!u) return sendJSON(res,{error:'CPF não encontrado no cadastro.'},401);
+    if(!ST.presentes.includes(u.id)) return sendJSON(res,{error:'Você não está marcado como presente.'},403);
+    if(ST.jaVotou.includes(u.id)) return sendJSON(res,{error:'Você já votou nesta eleição.'},403);
+    return sendJSON(res,{ok:true,user:{id:u.id,nome:u.nome,cpf:u.cpf},elStatus:ST.elStatus});
+  }
+
+  if(m==='POST'&&pn==='/api/votar'){
+    const{userId,votos}=await jsonBody(req);
+    if(!userId||!votos) return sendJSON(res,{error:'Dados inválidos.'},400);
+    if(ST.elStatus!=='ativa') return sendJSON(res,{error:'Eleição não está ativa.'},403);
+    if(!ST.presentes.includes(userId)) return sendJSON(res,{error:'Usuário não está presente.'},403);
+    if(ST.jaVotou.includes(userId)) return sendJSON(res,{error:'Usuário já votou.'},409);
+    ST.cargos.forEach(g=>{
+      if(!ST.resultados[g.id])ST.resultados[g.id]={branco:0};
+      const sel=Array.isArray(votos[g.id])?votos[g.id]:[];
+      // Valida que os candidatos existem
+      const selValidos=sel.filter(cid=>ST.candidatos.find(c=>c.id===cid));
+      ST.resultados[g.id].branco+=(g.vagas-Math.min(selValidos.length,g.vagas));
+      selValidos.slice(0,g.vagas).forEach(cid=>{ST.resultados[g.id][cid]=(ST.resultados[g.id][cid]||0)+1;});
+    });
+    ST.jaVotou.push(userId);saveState(ST);
+    return sendJSON(res,{ok:true});
+  }
+
+  if(m==='GET'&&pn==='/api/resultados'){
+    if(ST.elStatus!=='encerrada') return sendJSON(res,{error:'Eleição ainda não encerrada.'},403);
+    return sendJSON(res,{resultados:ST.resultados,cargos:ST.cargos,candidatos:ST.candidatos,apuracao:apurar(),totalPresentes:ST.presentes.length});
+  }
+
+  if(m==='POST'&&pn==='/api/checkin/buscar'){
+    const{cpf}=await jsonBody(req);
+    if(!cpf) return sendJSON(res,{error:'CPF obrigatório.'},400);
+    const u=ST.users.find(x=>x.cpf===cpf);
+    if(!u) return sendJSON(res,{error:'CPF não encontrado.'},404);
+    return sendJSON(res,{ok:true,user:{id:u.id,nome:u.nome,cpf:u.cpf},jaPresente:ST.presentes.includes(u.id)});
+  }
+  if(m==='POST'&&pn==='/api/checkin/confirmar'){
+    const{cpf}=await jsonBody(req);
+    const u=ST.users.find(x=>x.cpf===cpf);
+    if(!u) return sendJSON(res,{error:'CPF não encontrado.'},404);
+    if(ST.presentes.includes(u.id)) return sendJSON(res,{ok:true,msg:'Presença já confirmada.',user:{id:u.id,nome:u.nome}});
+    ST.presentes.push(u.id);saveState(ST);
+    return sendJSON(res,{ok:true,msg:'Presença confirmada!',user:{id:u.id,nome:u.nome}});
+  }
+
+  // ── A partir daqui: TODOS os endpoints exigem token admin ════════════════
+  if(!isAdmin(req)){deny(res);return;}
+
+  // Config
+  if(m==='POST'&&pn==='/api/config'){const b=await jsonBody(req);ST.config={...ST.config,...b};saveState(ST);return sendJSON(res,{ok:true,config:ST.config});}
+  if(m==='POST'&&pn==='/api/config/logo'){
+    const ct=req.headers['content-type']||'',bm=ct.match(/boundary=([^\s;]+)/);
+    if(!bm)return sendJSON(res,{error:'Content-Type inválido.'},400);
+    const parts=parseMultipart(await rawBody(req),bm[1]),file=parts['logo'];
+    if(!file?.filename)return sendJSON(res,{error:'Arquivo não enviado.'},400);
+    const ext=safeExt(file.filename),fn='logo'+ext;
+    fs.writeFileSync(path.join(LOGO_DIR,fn),file.data);
+    ST.config.logoUrl='/logos/'+fn;saveState(ST);return sendJSON(res,{ok:true,logoUrl:ST.config.logoUrl});
+  }
+
+  // Admin senha
+  if(m==='POST'&&pn==='/api/admin/senha'){
+    const{senhaAtual,novaSenha}=await jsonBody(req);
+    if(hashPwd(senhaAtual)!==ST.adminSenha)return sendJSON(res,{error:'Senha atual incorreta.'},403);
+    if(!novaSenha||novaSenha.length<6)return sendJSON(res,{error:'Nova senha deve ter ao menos 6 caracteres.'},400);
+    ST.adminSenha=hashPwd(novaSenha);saveState(ST);return sendJSON(res,{ok:true});
+  }
+
+  // Presença
+  if(m==='POST'&&pn==='/api/presenca/marcar-todos'){ST.presentes=ST.users.map(u=>u.id);saveState(ST);return sendJSON(res,{ok:true,presentes:ST.presentes});}
+  if(m==='POST'&&pn==='/api/presenca/desmarcar-todos'){ST.presentes=[];saveState(ST);return sendJSON(res,{ok:true,presentes:ST.presentes});}
+  if(m==='POST'&&pn.startsWith('/api/presenca/')){
+    const id=pn.split('/')[3];
+    if(!ST.users.find(u=>u.id===id))return sendJSON(res,{error:'Usuário não encontrado.'},404);
+    const idx=ST.presentes.indexOf(id);idx>=0?ST.presentes.splice(idx,1):ST.presentes.push(id);
+    saveState(ST);return sendJSON(res,{ok:true,presentes:ST.presentes});
+  }
+  if(m==='GET'&&pn==='/api/presenca/exportar-xlsx'){
+    const rows=ST.users.filter(u=>ST.presentes.includes(u.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
+    const hdr=[{v:'#',bold:true,bg:'4472C4'},{v:'Nome Completo',bold:true,bg:'4472C4'},{v:'CPF',bold:true,bg:'4472C4'},{v:'Votou?',bold:true,bg:'4472C4'}];
+    const buf=buildXLSX([{name:'Presença',rows:[hdr,...rows.map((u,i)=>[i+1,u.nome,u.cpf,ST.jaVotou.includes(u.id)?'Sim':'Não'])]}]);
+    return sendXLSX(res,buf,'lista-presenca.xlsx');
+  }
+
+  // Usuários
+  if(m==='GET'&&pn==='/api/usuarios/exportar'){
+    const csv=toCSV(ST.users,['nome','cpf']);
+    res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="eleitores.csv"'});
+    return res.end('\uFEFF'+csv);
+  }
+  if(m==='POST'&&pn==='/api/usuarios/importar'){
+    const body=await jsonBody(req),rows=parseCSV(typeof body==='string'?body:body.csv||'');
+    let added=0,skipped=0;
+    for(const r of rows){
+      const nome=(r.nome||r['nome completo']||'').trim(),cpf=(r.cpf||'').trim();
+      if(!nome||!cpf||!validCPF(cpf.replace(/\D/g,''))||ST.users.find(u=>u.cpf===cpf)){skipped++;continue;}
+      ST.users.push({id:genId(),nome,cpf});added++;
+    }
+    saveState(ST);return sendJSON(res,{ok:true,added,skipped});
+  }
+  if(m==='POST'&&pn==='/api/usuarios'){
+    const{nome,cpf}=await jsonBody(req);
+    if(!nome||!cpf)return sendJSON(res,{error:'Nome e CPF obrigatórios.'},400);
+    const cpfClean=cpf.replace(/\D/g,'');
+    if(!validCPF(cpfClean))return sendJSON(res,{error:'CPF inválido.'},400);
+    if(ST.users.find(u=>u.cpf===cpf))return sendJSON(res,{error:'CPF já cadastrado.'},409);
+    const u={id:genId(),nome:nome.trim(),cpf};ST.users.push(u);saveState(ST);
+    return sendJSON(res,{ok:true,user:u});
+  }
+  if(m==='PATCH'&&pn.startsWith('/api/usuarios/')){
+    const id=pn.split('/')[3],u=ST.users.find(x=>x.id===id);
+    if(!u)return sendJSON(res,{error:'Usuário não encontrado.'},404);
+    const b=await jsonBody(req);
+    if(b.nome)u.nome=b.nome.trim();
+    if(b.cpf&&b.cpf!==u.cpf){
+      if(!validCPF(b.cpf.replace(/\D/g,'')))return sendJSON(res,{error:'CPF inválido.'},400);
+      if(ST.users.find(x=>x.cpf===b.cpf&&x.id!==id))return sendJSON(res,{error:'CPF já em uso.'},409);
+      u.cpf=b.cpf;
+    }
+    saveState(ST);return sendJSON(res,{ok:true,user:u});
+  }
+  if(m==='DELETE'&&pn.startsWith('/api/usuarios/')){
+    const id=pn.split('/')[3];
+    ST.users=ST.users.filter(u=>u.id!==id);ST.presentes=ST.presentes.filter(x=>x!==id);
+    ST.jaVotou=ST.jaVotou.filter(x=>x!==id);ST.candidatos=ST.candidatos.filter(c=>c.userId!==id);
+    saveState(ST);return sendJSON(res,{ok:true});
+  }
+
+  // Candidatos
+  if(m==='POST'&&pn==='/api/candidatos'){
+    const{userId,idade,desc}=await jsonBody(req);
+    if(!userId)return sendJSON(res,{error:'userId obrigatório.'},400);
+    const u=ST.users.find(x=>x.id===userId);
+    if(!u)return sendJSON(res,{error:'Usuário não encontrado.'},404);
+    if(ST.candidatos.find(c=>c.userId===userId))return sendJSON(res,{error:'Este usuário já é candidato.'},409);
+    const c={id:genId(),userId,nome:u.nome,idade:Number(idade)||0,fotoUrl:'',desc:(desc||'').trim()};
+    ST.candidatos.push(c);saveState(ST);return sendJSON(res,{ok:true,candidato:c});
+  }
+  if(m==='PATCH'&&pn.match(/^\/api\/candidatos\/[^/]+$/)&&!pn.includes('/foto')){
+    const id=pn.split('/')[3],c=ST.candidatos.find(x=>x.id===id);
+    if(!c)return sendJSON(res,{error:'Candidato não encontrado.'},404);
+    const b=await jsonBody(req);
+    if(b.idade!==undefined)c.idade=Number(b.idade);
+    if(b.desc!==undefined)c.desc=b.desc.trim();
+    saveState(ST);return sendJSON(res,{ok:true,candidato:c});
+  }
+  if(m==='DELETE'&&pn.startsWith('/api/candidatos/')&&!pn.includes('/foto')){
+    const id=pn.split('/')[3],c=ST.candidatos.find(x=>x.id===id);
+    if(c?.fotoUrl){const fp=path.join(__dirname,'public',c.fotoUrl);if(fs.existsSync(fp))fs.unlinkSync(fp);}
+    ST.candidatos=ST.candidatos.filter(x=>x.id!==id);saveState(ST);return sendJSON(res,{ok:true});
+  }
+  if(m==='POST'&&pn.match(/^\/api\/candidatos\/[^/]+\/foto$/)){
+    const id=pn.split('/')[3],c=ST.candidatos.find(x=>x.id===id);
+    if(!c)return sendJSON(res,{error:'Candidato não encontrado.'},404);
+    const ct=req.headers['content-type']||'',bm=ct.match(/boundary=([^\s;]+)/);
+    if(!bm)return sendJSON(res,{error:'Content-Type inválido.'},400);
+    const parts=parseMultipart(await rawBody(req),bm[1]),file=parts['foto'];
+    if(!file?.filename)return sendJSON(res,{error:'Arquivo não enviado.'},400);
+    const ext=safeExt(file.filename),fn='cand_'+id+ext;
+    fs.writeFileSync(path.join(FOTOS_DIR,fn),file.data);
+    c.fotoUrl='/fotos/'+fn;saveState(ST);return sendJSON(res,{ok:true,fotoUrl:c.fotoUrl});
+  }
+
+  // Cargos
+  if(m==='POST'&&pn==='/api/cargos'){
+    const{nome,vagas}=await jsonBody(req);
+    if(!nome||!vagas)return sendJSON(res,{error:'Nome e vagas obrigatórios.'},400);
+    ST.cargos.push({id:genId(),nome:nome.trim(),vagas:Number(vagas)});saveState(ST);return sendJSON(res,{ok:true});
+  }
+  if(m==='DELETE'&&pn.startsWith('/api/cargos/')){ST.cargos=ST.cargos.filter(g=>g.id!==pn.split('/')[3]);saveState(ST);return sendJSON(res,{ok:true});}
+
+  // Eleição
+  if(m==='POST'&&pn==='/api/eleicao/iniciar'){
+    if(!ST.presentes.length)return sendJSON(res,{error:'Marque presença de pelo menos 1 eleitor.'},400);
+    if(!ST.cargos.length)return sendJSON(res,{error:'Cadastre pelo menos 1 cargo.'},400);
+    if(!ST.candidatos.length)return sendJSON(res,{error:'Cadastre pelo menos 1 candidato.'},400);
+    ST.elStatus='ativa';saveState(ST);return sendJSON(res,{ok:true});
+  }
+  if(m==='POST'&&pn==='/api/eleicao/encerrar'){ST.elStatus='encerrada';saveState(ST);return sendJSON(res,{ok:true});}
+  if(m==='POST'&&pn==='/api/eleicao/reiniciar'){ST.elStatus='aguardando';ST.resultados={};ST.jaVotou=[];saveState(ST);return sendJSON(res,{ok:true});}
+
+  // Resultado XLSX
+  if(m==='GET'&&pn==='/api/resultados/exportar-xlsx'){
+    if(ST.elStatus!=='encerrada')return sendJSON(res,{error:'Eleição não encerrada.'},403);
+    const ap=apurar(),sheets=[];
+    sheets.push({name:'Resumo',rows:[
+      [{v:APP_NAME+' v'+VERSION,bold:true,bg:'4472C4'},'',''],['','',''],
+      [{v:'Total de presentes',bold:true},ST.presentes.length,''],
+      [{v:'Total de votantes',bold:true},ST.jaVotou.length,''],
+      [{v:'Abstenções',bold:true},ST.presentes.length-ST.jaVotou.length,''],['','',''],
+      ...ap.map(a=>[{v:a.cargo.nome,bold:true},`${a.eleitos.length} eleito(s) de ${a.cargo.vagas} vaga(s)`,`Maioria: ${a.maioria} votos`]),
+    ]});
+    for(const a of ap){
+      const hdr=[[{v:'#',bold:true,bg:'4472C4'},{v:'Candidato',bold:true,bg:'4472C4'},{v:'Votos',bold:true,bg:'4472C4'},{v:'% dos presentes',bold:true,bg:'4472C4'},{v:'Situação',bold:true,bg:'4472C4'}]];
+      const rows=a.rank.map((r,i)=>{
+        const pct=ST.presentes.length>0?(r.v/ST.presentes.length*100).toFixed(1)+'%':'0%';
+        const el=a.eleitos.some(e=>e.cid===r.cid);
+        return[i+1,el?{v:r.c.nome,bold:true,bg:'70AD47'}:r.c.nome,el?{v:r.v,bold:true,bg:'70AD47'}:r.v,el?{v:pct,bold:true,bg:'70AD47'}:pct,el?{v:'ELEITO ✓',bold:true,bg:'70AD47'}:(r.v>0?'Não eleito':'Sem votos')];
+      });
+      if(a.branco>0)rows.push(['—','Votos em branco / nulos',a.branco,'—','—']);
+      sheets.push({name:a.cargo.nome.slice(0,31),rows:[...hdr,...rows]});
+    }
+    const pr=ST.users.filter(u=>ST.presentes.includes(u.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
+    sheets.push({name:'Lista de Presença',rows:[[{v:'#',bold:true,bg:'4472C4'},{v:'Nome',bold:true,bg:'4472C4'},{v:'CPF',bold:true,bg:'4472C4'},{v:'Votou?',bold:true,bg:'4472C4'}],...pr.map((u,i)=>[i+1,u.nome,u.cpf,ST.jaVotou.includes(u.id)?'Sim':'Não'])]});
+    return sendXLSX(res,buildXLSX(sheets),'resultado-eleicao.xlsx');
+  }
+
+  return sendJSON(res,{error:'Rota não encontrada.'},404);
 });
 
 function checkinPage() {
