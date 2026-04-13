@@ -1,0 +1,77 @@
+{
+  "users": [
+    {
+      "id": "u1",
+      "nome": "Ana Oliveira",
+      "cpf": "111.111.111-11"
+    },
+    {
+      "id": "u2",
+      "nome": "Bruno Santos",
+      "cpf": "222.222.222-22"
+    },
+    {
+      "id": "u3",
+      "nome": "Carla Mendes",
+      "cpf": "333.333.333-33"
+    },
+    {
+      "id": "u4",
+      "nome": "Diego Lima",
+      "cpf": "444.444.444-44"
+    },
+    {
+      "id": "u5",
+      "nome": "Elisa Nunes",
+      "cpf": "555.555.555-55"
+    },
+    {
+      "id": "u6",
+      "nome": "Fábio Costa",
+      "cpf": "666.666.666-66"
+    }
+  ],
+  "candidatos": [
+    {
+      "id": "c1",
+      "userId": "u1",
+      "nome": "Ana Oliveira",
+      "idade": 42,
+      "fotoUrl": "",
+      "desc": "15 anos de serviço."
+    },
+    {
+      "id": "c2",
+      "userId": "u2",
+      "nome": "Bruno Santos",
+      "idade": 38,
+      "fotoUrl": "",
+      "desc": "Formação teológica."
+    }
+  ],
+  "cargos": [
+    {
+      "id": "g1",
+      "nome": "Diácono",
+      "vagas": 2
+    },
+    {
+      "id": "g2",
+      "nome": "Presbítero",
+      "vagas": 1
+    }
+  ],
+  "presentes": [],
+  "jaVotou": [],
+  "resultados": {},
+  "elStatus": "aguardando",
+  "config": {
+    "nomeInstituicao": "Eleição de Oficiais da Igreja",
+    "logoUrl": "",
+    "corPrimaria": "#185FA5",
+    "corSecundaria": "#3B6D11",
+    "corFundo": "#f0ede6",
+    "corTexto": "#1a1a18"
+  },
+  "adminSenha": "d24f25b550f60be87fbd6854c477288ae761bad83acaa9b4a65bdb7caad90ead"
+}
