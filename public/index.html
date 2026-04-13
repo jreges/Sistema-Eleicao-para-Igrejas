@@ -218,7 +218,7 @@ async function doLogin(){
 function renderAdmin(){
   const st=S.elStatus;
   const sb=st==='ativa'?'<span class="badge bdg-ok">Ativa</span>':st==='encerrada'?'<span class="badge bdg-warn">Encerrada</span>':'<span class="badge bdg-gray">Aguardando</span>';
-  const tabs=[['usuarios','Usuários'],['presenca','Presença'],['candidatos','Candidatos'],['cargos','Cargos'],['eleicao','Eleição'],['resultados','Resultados'],['configuracoes','Configurações']];
+  const tabs=[['usuarios','Membros'],['presenca','Presença'],['candidatos','Candidatos'],['cargos','Cargos'],['eleicao','Eleição'],['resultados','Resultados'],['configuracoes','Configurações']];
   const th=tabs.map(([id,lbl])=>`<button class="tab-btn ${S.tab===id?'active':''}" onclick="setTab('${id}')">${lbl}</button>`).join('');
   $('app').innerHTML=`
   <div style="min-height:100vh;background:var(--bg,#f0ede6)">
@@ -241,7 +241,7 @@ function renderAdmin(){
 async function setTab(id){
   S.tab=id;
   document.querySelectorAll('.tab-btn').forEach(b=>{
-    const labels={usuarios:'Usuários',presenca:'Presença',candidatos:'Candidatos',cargos:'Cargos',eleicao:'Eleição',resultados:'Resultados',configuracoes:'Configurações'};
+    const labels={usuarios:'Membros',presenca:'Presença',candidatos:'Candidatos',cargos:'Cargos',eleicao:'Eleição',resultados:'Resultados',configuracoes:'Configurações'};
     b.classList.toggle('active',b.textContent===labels[id]);
   });
   if(id!=='eleicao')stopPoll();
@@ -268,7 +268,7 @@ let _uFilter='', _uSort='nome-asc', _uSel=new Set();
 function tabUsuarios(){
   _uSel=new Set();
   return `
-  <h3 style="font-weight:700;margin-bottom:14px">Eleitores (${S.users.length})</h3>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><h3 style="font-weight:700">Membros</h3><span style="background:var(--pbg);color:var(--p);font-size:13px;font-weight:700;padding:3px 12px;border-radius:20px">${S.users.length} cadastrado${S.users.length!==1?'s':''}</span></div>
 
   <div class="card">
     <div class="grid2" style="gap:10px">
@@ -279,14 +279,18 @@ function tabUsuarios(){
       </div>
     </div>
     <div id="u-err" class="err-box" style="display:none;margin-top:8px"></div>
-    <button class="btn btn-p" style="margin-top:10px" onclick="addUser()">+ Adicionar eleitor</button>
+    <button class="btn btn-p" style="margin-top:10px" onclick="addUser()">+ Adicionar membro</button>
   </div>
 
   <div class="card">
     <p style="font-size:13px;font-weight:600;margin-bottom:8px">📥 Importar / Exportar</p>
-    <p style="font-size:12px;color:#888;margin-bottom:10px">CSV com colunas: <code>nome,cpf</code> — use <code>modelo-importacao.csv</code> como base.</p>
+    <p style="font-size:12px;color:#888;margin-bottom:8px">
+      CSV: colunas <code>nome,cpf</code> · XLSX: mesmas colunas na linha 1.<br>
+      Arquivo modelo: <code>modelo-importacao.csv</code>
+    </p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <label class="btn btn-p" style="cursor:pointer">📂 Importar CSV<input type="file" accept=".csv,.txt" style="display:none" onchange="importCSV(this)"></label>
+      <label class="btn btn-p" style="cursor:pointer">📂 CSV<input type="file" accept=".csv,.txt" style="display:none" onchange="importCSV(this)"></label>
+      <label class="btn btn-p" style="cursor:pointer">📊 XLSX<input type="file" accept=".xlsx,.xls" style="display:none" onchange="importXLSX(this)"></label>
       <button class="btn" onclick="exportarCSV()">📤 Exportar CSV</button>
     </div>
     <div id="import-msg" style="display:none;margin-top:10px"></div>
@@ -401,7 +405,7 @@ async function addUser(){
   if(!validCPF(cpf)){e.textContent='CPF inválido. Verifique os dígitos.';e.style.display='block';return;}
   const res=await api.post('/api/usuarios',{nome,cpf});
   if(res.error){e.textContent=res.error;e.style.display='block';return;}
-  toast('Eleitor adicionado!','success');await renderTab();
+  toast('Membro adicionado!','success');await renderTab();
 }
 let _editId=null;
 function editUser(id){
@@ -419,20 +423,36 @@ async function saveEditUser(){
   const res=await api.patch('/api/usuarios/'+_editId,{nome,cpf});
   if(res.error){e.textContent=res.error;e.style.display='block';return;}
   $('modal-edit').style.display='none';
-  toast('Atualizado!','success');await renderTab();
+  toast('Membro atualizado!','success');await renderTab();
 }
 async function delUser(id){
   if(!confirm('Remover este eleitor?'))return;
-  await api.del('/api/usuarios/'+id);toast('Removido.','warn');await renderTab();
+  await api.del('/api/usuarios/'+id);toast('Membro removido.','warn');await renderTab();
 }
 async function importCSV(input){
   const file=input.files[0];if(!file)return;
   const text=await file.text(),m=$('import-msg');
-  m.style.display='block';m.className='info-box';m.textContent='Importando...';
+  m.style.display='block';m.className='info-box';m.textContent='Importando CSV...';
   const res=await api.postTxt('/api/usuarios/importar',text);
   if(res.error){m.className='err-box';m.textContent=res.error;return;}
-  m.className='succ-box';m.textContent=`✓ ${res.added} adicionado(s), ${res.skipped} ignorado(s).`;
-  toast(`${res.added} eleitor(es) importado(s)!`,'success');await renderTab();
+  const errosTxt=res.erros&&res.erros.length?' ('+res.erros.slice(0,3).join('; ')+(res.erros.length>3?'…':'')+')'  :'';
+  m.className='succ-box';m.textContent='✓ '+res.added+' adicionado(s), '+res.skipped+' ignorado(s).'+errosTxt;
+  toast(res.added+' membro(s) importado(s)!','success');await renderTab();
+}
+
+async function importXLSX(input){
+  const file=input.files[0];if(!file)return;
+  const m=$('import-msg');
+  m.style.display='block';m.className='info-box';m.textContent='Importando XLSX...';
+  try{
+    const fd=new FormData();fd.append('file',file);
+    const resp=await fetch('/api/usuarios/importar-xlsx',{method:'POST',headers:authH(),body:fd});
+    const res=await resp.json();
+    if(res.error){m.className='err-box';m.textContent='Erro: '+res.error;return;}
+    const errosTxt=res.erros&&res.erros.length?' ('+res.erros.slice(0,3).join('; ')+(res.erros.length>3?'…':'')+')'  :'';
+    m.className='succ-box';m.textContent='✓ '+res.added+' adicionado(s), '+res.skipped+' ignorado(s).'+errosTxt;
+    toast(res.added+' membro(s) importado(s)!','success');await renderTab();
+  }catch(e){m.className='err-box';m.textContent='Erro ao processar arquivo.';}
 }
 
 // ─── TAB: PRESENÇA ────────────────────────────────────────────────────────────
@@ -449,8 +469,21 @@ function tabPresenca(){
     </div>`;
   }).join('');
   return`
-  <h3 style="font-weight:700;margin-bottom:4px">Lista de Presença</h3>
-  <p style="font-size:12px;color:#888;margin-bottom:12px">${S.presentes.length} de ${S.users.length} presentes · ${S.jaVotou.length} votaram</p>
+  <h3 style="font-weight:700;margin-bottom:8px">Lista de Presença</h3>
+  ${(()=>{
+    const totalMembros=S.users.length;
+    const totalPresentes=S.presentes.length;
+    const quorum=totalMembros>0?Math.ceil(totalMembros/2):0;
+    const quorumAtingido=totalPresentes>=quorum&&totalMembros>0;
+    const pct=totalMembros>0?Math.round(totalPresentes/totalMembros*100):0;
+    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">'
+      +'<span style="font-size:12px;color:#888">'+totalPresentes+' de '+totalMembros+' presentes ('+pct+'%)</span>'
+      +'·<span style="font-size:12px;color:#888">'+S.jaVotou.length+' votaram</span>'
+      +(quorumAtingido
+        ?'<span style="background:#eaf3de;color:#3B6D11;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">✓ Quórum mínimo atingido!</span>'
+        :'<span style="font-size:12px;color:#aaa">Quórum mínimo: '+quorum+' presentes</span>')
+      +'</div>';
+  })()}
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
     <button class="btn btn-s btn-sm" onclick="presMarcarTodos()">✓ Marcar todos</button>
     <button class="btn btn-danger btn-sm" onclick="presDesmarcarTodos()">✗ Desmarcar todos</button>
@@ -539,7 +572,7 @@ async function uploadFoto(id,input){
   if(r.error){toast('Erro: '+r.error,'danger');return;}
   toast('Foto atualizada!','success');await renderTab();
 }
-async function delCand(id){if(!confirm('Remover candidato?'))return;await api.del('/api/candidatos/'+id);toast('Removido.','warn');await renderTab();}
+async function delCand(id){if(!confirm('Remover candidato?'))return;await api.del('/api/candidatos/'+id);toast('Membro removido.','warn');await renderTab();}
 
 // ─── TAB: CARGOS ──────────────────────────────────────────────────────────────
 function tabCargos(){
@@ -561,12 +594,17 @@ function tabCargos(){
   <div>${list}</div>`;
 }
 async function addCargo() {const n=($('g-nome').value||'').trim(),v=$('g-vagas').value;if(!n||!v){toast('Preencha os campos.','warn');return;}const r=await api.post('/api/cargos',{nome:n,vagas:v});if(r.error){toast(r.error,'danger');return;}toast('Cargo criado!','success');await renderTab();}
-async function delCargo(id){if(!confirm('Remover?'))return;await api.del('/api/cargos/'+id);toast('Removido.','warn');await renderTab();}
+async function delCargo(id){if(!confirm('Remover?'))return;await api.del('/api/cargos/'+id);toast('Membro removido.','warn');await renderTab();}
 
 // ─── TAB: ELEIÇÃO ─────────────────────────────────────────────────────────────
 function tabEleicao(){
   const st=S.elStatus;
-  const stats=`<div class="grid2" style="margin-bottom:16px">${[['👥','Presentes',S.presentes.length],['✅','Votaram',S.jaVotou.length],['🏛️','Cargos',S.cargos.length],['👤','Candidatos',S.candidatos.length]].map(([ic,lb,v])=>`<div class="stat-card"><div class="lbl">${ic} ${lb}</div><div class="val">${v}</div></div>`).join('')}</div>`;
+  const quorum=S.users.length>0?Math.ceil(S.users.length/2):0;
+  const quorumOk=S.presentes.length>=quorum&&S.users.length>0;
+  const stats='<div class="grid2" style="margin-bottom:8px">'+[['👥','Membros',S.users.length],['🙋','Presentes',S.presentes.length],['✅','Votaram',S.jaVotou.length],['🏛️','Cargos',S.cargos.length]].map(function(x){return '<div class="stat-card"><div class="lbl">'+x[0]+' '+x[1]+'</div><div class="val">'+x[2]+'</div></div>';}).join('')+'</div>'
+    +(quorumOk
+      ?'<div style="background:#eaf3de;color:#3B6D11;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;margin-bottom:14px">✓ Quórum atingido! ('+S.presentes.length+'/'+quorum+' necessários)</div>'
+      :'<div style="background:#f8f8f6;color:#888;border-radius:8px;padding:8px 14px;font-size:12px;margin-bottom:14px">Quórum mínimo: '+quorum+' presentes (50% dos '+S.users.length+' membros)</div>');
   let badge='',msg='',btn='';
   if(st==='aguardando'){badge='<span class="badge bdg-gray">Aguardando</span>';msg='<p style="font-size:12px;color:#888;margin-bottom:12px">Marque presença, cadastre cargos e candidatos antes de iniciar.</p>';btn='<button class="btn btn-s btn-full" onclick="elIniciar()">▶ Iniciar Eleição</button>';}
   else if(st==='ativa'){badge='<span class="badge bdg-ok">Em andamento</span>';msg=`<p style="font-size:12px;color:#888;margin-bottom:12px">${S.presentes.length-S.jaVotou.length} eleitor(es) ainda não votou.</p>`;btn='<button class="btn btn-danger btn-full" onclick="elEncerrar()">⏹ Encerrar Eleição</button>';}

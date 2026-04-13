@@ -1,15 +1,14 @@
 /**
- * Eleição de Oficiais da Igreja — Servidor v4.1
+ * Eleição de Oficiais da Igreja — Servidor v4.2
  * Node.js puro, zero dependências externas.
  *
- * Segurança v4.1:
- *  - Tokens de sessão admin (32 bytes aleatórios, expiram em 8h)
- *  - Todos endpoints admin exigem X-Admin-Token válido
- *  - Senhas com hash SHA-256 + salt
- *  - Rate limiting básico no login (5 tentativas / 15 min por IP)
- *  - Validação rigorosa de CPF
- *  - Sanitização de nomes de arquivo no upload
- *  - Sem dados sensíveis na API pública
+ * Novidades v4.2:
+ *  - Aba "usuários" renomeada para "membros"
+ *  - Contador de membros na página membros
+ *  - Presença: aviso de quórum mínimo (≥50% membros cadastrados)
+ *  - Importação de membros via CSV e XLSX
+ *  - Check-in: CPF não encontrado → redireciona para cadastro próprio
+ *  - Rate limiting no login
  */
 'use strict';
 const http   = require('http');
@@ -18,38 +17,37 @@ const path   = require('path');
 const url    = require('url');
 const crypto = require('crypto');
 const { buildXLSX } = require('./xlsx-builder');
+const { readXLSX }  = require('./xlsx-reader');
 
-const PORT      = 3000;
+const PORT      = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'data', 'state.json');
 const FOTOS_DIR = path.join(__dirname, 'public', 'fotos');
 const LOGO_DIR  = path.join(__dirname, 'public', 'logos');
 const APP_NAME  = 'Eleição de Oficiais da Igreja';
-const VERSION   = '4.1';
+const VERSION   = '4.2';
 
 // ─── Rate Limiting (login) ────────────────────────────────────────────────────
-const _loginAttempts = new Map(); // ip -> { count, resetAt }
+const _loginAttempts = new Map();
 const RATE_LIMIT = 5, RATE_WINDOW = 15 * 60 * 1000;
-
-function checkRateLimit(ip) {
-  const now = Date.now();
-  const rec = _loginAttempts.get(ip);
-  if (!rec || now > rec.resetAt) { _loginAttempts.set(ip, { count: 1, resetAt: now + RATE_WINDOW }); return true; }
+function checkRate(ip) {
+  const now = Date.now(), rec = _loginAttempts.get(ip);
+  if (!rec || now > rec.resetAt) { _loginAttempts.set(ip, { count:1, resetAt: now+RATE_WINDOW }); return true; }
   if (rec.count >= RATE_LIMIT) return false;
   rec.count++; return true;
 }
-function resetRateLimit(ip) { _loginAttempts.delete(ip); }
-setInterval(() => { const now = Date.now(); for (const [k, v] of _loginAttempts) if (now > v.resetAt) _loginAttempts.delete(k); }, RATE_WINDOW);
+function resetRate(ip) { _loginAttempts.delete(ip); }
+setInterval(()=>{ const n=Date.now(); for(const[k,v]of _loginAttempts)if(n>v.resetAt)_loginAttempts.delete(k); }, RATE_WINDOW);
 
 // ─── Sessões Admin ────────────────────────────────────────────────────────────
 const _sessions = new Map();
-function _newToken()   { return crypto.randomBytes(32).toString('hex'); }
-function _sessionOk(t) { if (!t) return false; const s = _sessions.get(t); if (!s) return false; if (Date.now() > s.exp) { _sessions.delete(t); return false; } return true; }
-function _mkSession()  { const t = _newToken(); _sessions.set(t, { exp: Date.now() + 8 * 3600 * 1000 }); return t; }
-function _rmSession(t) { _sessions.delete(t); }
-setInterval(() => { const now = Date.now(); for (const [k, v] of _sessions) if (now > v.exp) _sessions.delete(k); }, 3600 * 1000);
+function newToken()   { return crypto.randomBytes(32).toString('hex'); }
+function sessionOk(t) { if(!t)return false; const s=_sessions.get(t); if(!s)return false; if(Date.now()>s.exp){_sessions.delete(t);return false;} return true; }
+function mkSession()  { const t=newToken(); _sessions.set(t,{exp:Date.now()+8*3600*1000}); return t; }
+function rmSession(t) { _sessions.delete(t); }
+setInterval(()=>{ const n=Date.now(); for(const[k,v]of _sessions)if(n>v.exp)_sessions.delete(k); }, 3600*1000);
 
 // ─── Hash ─────────────────────────────────────────────────────────────────────
-function hashPwd(s) { return crypto.createHash('sha256').update(s + 'eleicao_salt_2024').digest('hex'); }
+function hashPwd(s) { return crypto.createHash('sha256').update(s+'eleicao_salt_2024').digest('hex'); }
 
 // ─── Estado padrão ────────────────────────────────────────────────────────────
 const DEFAULT = {
@@ -62,15 +60,12 @@ const DEFAULT = {
     { id:'u6', nome:'Fábio Costa',  cpf:'666.666.666-66' },
   ],
   candidatos: [
-    { id:'c1', userId:'u1', nome:'Ana Oliveira', idade:42, fotoUrl:'', desc:'15 anos de serviço, liderança em projetos comunitários.' },
-    { id:'c2', userId:'u2', nome:'Bruno Santos', idade:38, fotoUrl:'', desc:'Formação teológica, experiência em aconselhamento pastoral.' },
-    { id:'c3', userId:'u3', nome:'Carla Mendes', idade:51, fotoUrl:'', desc:'Coordenadora de grupos de estudo há 8 anos.' },
-    { id:'c4', userId:'u4', nome:'Diego Lima',   idade:45, fotoUrl:'', desc:'Administrador, responsável pelas finanças nos últimos 5 anos.' },
-    { id:'c5', userId:'u5', nome:'Elisa Nunes',  idade:36, fotoUrl:'', desc:'Trabalho com jovens e evangelismo urbano há uma década.' },
+    { id:'c1', userId:'u1', nome:'Ana Oliveira', idade:42, fotoUrl:'', desc:'15 anos de serviço.' },
+    { id:'c2', userId:'u2', nome:'Bruno Santos', idade:38, fotoUrl:'', desc:'Formação teológica.' },
   ],
   cargos:     [ { id:'g1', nome:'Diácono', vagas:2 }, { id:'g2', nome:'Presbítero', vagas:1 } ],
   presentes:  [], jaVotou: [], resultados: {}, elStatus: 'aguardando',
-  config: { nomeInstituicao: APP_NAME, logoUrl: '', corPrimaria:'#185FA5', corSecundaria:'#3B6D11', corFundo:'#f0ede6', corTexto:'#1a1a18' },
+  config: { nomeInstituicao:APP_NAME, logoUrl:'', corPrimaria:'#185FA5', corSecundaria:'#3B6D11', corFundo:'#f0ede6', corTexto:'#1a1a18' },
   adminSenha: hashPwd('admin'),
 };
 
@@ -78,78 +73,91 @@ const DEFAULT = {
 function loadState() {
   try {
     if (fs.existsSync(DATA_FILE)) {
-      const s = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-      if (!s.config)     s.config     = { ...DEFAULT.config };
+      const s = JSON.parse(fs.readFileSync(DATA_FILE,'utf8'));
+      if (!s.config)     s.config     = {...DEFAULT.config};
       if (!s.adminSenha) s.adminSenha = DEFAULT.adminSenha;
-      // Migração: remove campos legados de usuários
-      s.users      = (s.users||[]).map(u => ({ id:u.id, nome:u.nome, cpf:u.cpf }));
-      s.candidatos = (s.candidatos||[]).map(c => ({ userId:'', fotoUrl:'', desc:'', ...c }));
-      if (!s.config.nomeInstituicao || s.config.nomeInstituicao === 'Igreja / Instituição') s.config.nomeInstituicao = APP_NAME;
+      s.users      = (s.users||[]).map(u=>({id:u.id,nome:u.nome,cpf:u.cpf}));
+      s.candidatos = (s.candidatos||[]).map(c=>({userId:'',fotoUrl:'',desc:'',...c}));
+      if (!s.config.nomeInstituicao||s.config.nomeInstituicao==='Igreja / Instituição') s.config.nomeInstituicao=APP_NAME;
       return s;
     }
-  } catch(e) { console.error('Erro ao carregar estado:', e.message); }
+  } catch(e) { console.error('Erro ao carregar estado:',e.message); }
   return JSON.parse(JSON.stringify(DEFAULT));
 }
 function saveState(st) {
-  try { fs.mkdirSync(path.dirname(DATA_FILE), { recursive:true }); fs.writeFileSync(DATA_FILE, JSON.stringify(st, null, 2), 'utf8'); }
-  catch(e) { console.error('Erro ao salvar:', e.message); }
+  try { fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true}); fs.writeFileSync(DATA_FILE,JSON.stringify(st,null,2),'utf8'); }
+  catch(e) { console.error('Erro ao salvar:',e.message); }
 }
-
-fs.mkdirSync(FOTOS_DIR, { recursive:true });
-fs.mkdirSync(LOGO_DIR,  { recursive:true });
+fs.mkdirSync(FOTOS_DIR,{recursive:true}); fs.mkdirSync(LOGO_DIR,{recursive:true});
 let ST = loadState();
-const genId = () => Math.random().toString(36).slice(2, 9);
+const genId = ()=>Math.random().toString(36).slice(2,9);
 
 // ─── Validação CPF ────────────────────────────────────────────────────────────
 function validCPF(cpf) {
-  cpf = cpf.replace(/\D/g,'');
-  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
-  let s=0; for (let i=0;i<9;i++) s += +cpf[i]*(10-i); let r=(s*10)%11; if(r>=10)r=0; if(r!==+cpf[9]) return false;
-  s=0; for (let i=0;i<10;i++) s += +cpf[i]*(11-i); r=(s*10)%11; if(r>=10)r=0; return r===+cpf[10];
+  cpf=cpf.replace(/\D/g,'');
+  if(cpf.length!==11||/^(\d)\1{10}$/.test(cpf))return false;
+  let s=0;for(let i=0;i<9;i++)s+=+cpf[i]*(10-i);let r=(s*10)%11;if(r>=10)r=0;if(r!==+cpf[9])return false;
+  s=0;for(let i=0;i<10;i++)s+=+cpf[i]*(11-i);r=(s*10)%11;if(r>=10)r=0;return r===+cpf[10];
 }
 
-// ─── Sanitização de nome de arquivo ───────────────────────────────────────────
-function safeExt(filename) {
-  const allowed = ['.jpg','.jpeg','.png','.gif','.webp'];
-  const ext = path.extname(filename || '').toLowerCase();
-  return allowed.includes(ext) ? ext : '.jpg';
+// ─── Normaliza CPF (garante formato 000.000.000-00) ───────────────────────────
+function fmtCPF(cpf) {
+  const d = cpf.replace(/\D/g,'');
+  if (d.length !== 11) return cpf;
+  return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
 }
 
 // ─── CSV ──────────────────────────────────────────────────────────────────────
 function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-  const hdr = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase());
-  return lines.slice(1).map(line => {
-    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g,''));
-    const o = {}; hdr.forEach((h,i) => o[h] = vals[i]||''); return o;
+  const lines=text.trim().split(/\r?\n/);
+  if(lines.length<2)return[];
+  const hdr=lines[0].split(',').map(h=>h.trim().replace(/^"|"$/g,'').toLowerCase());
+  return lines.slice(1).map(line=>{
+    const vals=line.split(',').map(v=>v.trim().replace(/^"|"$/g,''));
+    const o={};hdr.forEach((h,i)=>o[h]=vals[i]||'');return o;
   });
 }
-function toCSV(rows, headers) {
-  return [headers.join(','), ...rows.map(r => headers.map(h => `"${(r[h]||'').toString().replace(/"/g,'""')}"`).join(','))].join('\n');
+function toCSV(rows,headers) {
+  return[headers.join(','),...rows.map(r=>headers.map(h=>`"${(r[h]||'').toString().replace(/"/g,'""')}"`).join(','))].join('\n');
+}
+
+// ─── Importação comum (CSV ou XLSX rows) ──────────────────────────────────────
+function importarMembros(rows) {
+  let added=0, skipped=0, erros=[];
+  for(const r of rows){
+    const nome=(r.nome||r['nome completo']||r['name']||'').trim();
+    const cpfRaw=(r.cpf||r['cpf membro']||'').trim();
+    if(!nome||!cpfRaw){skipped++;continue;}
+    const cpfLimpo=cpfRaw.replace(/\D/g,'');
+    if(!validCPF(cpfLimpo)){erros.push(`CPF inválido: ${cpfRaw}`);skipped++;continue;}
+    const cpfFmt=fmtCPF(cpfLimpo);
+    if(ST.users.find(u=>u.cpf===cpfFmt)){skipped++;continue;}
+    ST.users.push({id:genId(),nome,cpf:cpfFmt});added++;
+  }
+  return{added,skipped,erros};
 }
 
 // ─── Multipart ────────────────────────────────────────────────────────────────
-function parseMultipart(buf, boundary) {
-  const parts={}, sep=Buffer.from('--'+boundary); let pos=0;
-  while (pos<buf.length) {
-    const start=buf.indexOf(sep,pos); if(start===-1)break;
+function parseMultipart(buf,boundary){
+  const parts={},sep=Buffer.from('--'+boundary);let pos=0;
+  while(pos<buf.length){
+    const start=buf.indexOf(sep,pos);if(start===-1)break;
     pos=start+sep.length;
     if(buf[pos]===45&&buf[pos+1]===45)break;
     if(buf[pos]===13)pos+=2;
-    const he=buf.indexOf('\r\n\r\n',pos); if(he===-1)break;
-    const hs=buf.slice(pos,he).toString(); pos=he+4;
+    const he=buf.indexOf('\r\n\r\n',pos);if(he===-1)break;
+    const hs=buf.slice(pos,he).toString();pos=he+4;
     const ns=buf.indexOf(sep,pos),de=ns===-1?buf.length:ns-2;
-    const data=buf.slice(pos,de); pos=ns;
+    const data=buf.slice(pos,de);pos=ns;
     const nm=hs.match(/name="([^"]+)"/),fn=hs.match(/filename="([^"]+)"/);
-    if(nm) parts[nm[1]]={data,filename:fn?fn[1]:null,text:!fn?data.toString():null};
+    if(nm)parts[nm[1]]={data,filename:fn?fn[1]:null,text:!fn?data.toString():null};
   }
   return parts;
 }
 function rawBody(req)  { return new Promise((ok,ko)=>{const c=[];req.on('data',b=>c.push(b));req.on('end',()=>ok(Buffer.concat(c)));req.on('error',ko);}); }
 function jsonBody(req) { return new Promise((ok,ko)=>{let b='';req.on('data',c=>b+=c);req.on('end',()=>{try{ok(JSON.parse(b));}catch{ok(b);}});req.on('error',ko);}); }
 
-// ─── Resposta ─────────────────────────────────────────────────────────────────
+// ─── Respostas ────────────────────────────────────────────────────────────────
 const MIME={'.html':'text/html','.js':'application/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.svg':'image/svg+xml'};
 function sendJSON(res,data,status=200){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));}
 function sendHTML(res,html){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN'});res.end(html);}
@@ -157,28 +165,33 @@ function sendXLSX(res,buf,name){res.writeHead(200,{'Content-Type':'application/v
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 function getToken(req){const p=url.parse(req.url,true);return req.headers['x-admin-token']||p.query.t||'';}
-function isAdmin(req) {return _sessionOk(getToken(req));}
+function isAdmin(req) {return sessionOk(getToken(req));}
 function deny(res)    {sendJSON(res,{error:'Não autorizado. Faça login como administrador.'},401);}
 function getIP(req)   {return req.headers['x-forwarded-for']?.split(',')[0]||req.socket.remoteAddress||'unknown';}
 
+// ─── Sanitização ──────────────────────────────────────────────────────────────
+function safeExt(filename){
+  const ok=['.jpg','.jpeg','.png','.gif','.webp'];
+  const ext=path.extname(filename||'').toLowerCase();
+  return ok.includes(ext)?ext:'.jpg';
+}
+
 // ─── Apuração ─────────────────────────────────────────────────────────────────
-function apurar() {
+function apurar(){
   const total=ST.presentes.length;
   return ST.cargos.map(cargo=>{
     const res=ST.resultados[cargo.id]||{},branco=res.branco||0;
     const rank=Object.entries(res).filter(([k])=>k!=='branco').map(([cid,v])=>{const c=ST.candidatos.find(x=>x.id===cid);return c?{cid,c,v}:null;}).filter(Boolean).sort((a,b)=>b.v-a.v);
     const maioria=Math.ceil(total/2),eleitos=rank.filter((r,i)=>i<cargo.vagas&&r.v>=maioria);
-    return {cargo,rank,eleitos,branco,total,maioria};
+    return{cargo,rank,eleitos,branco,total,maioria};
   });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SERVIDOR
 // ══════════════════════════════════════════════════════════════════════════════
-const server = http.createServer(async (req,res)=>{
+const server = http.createServer(async(req,res)=>{
   const p=url.parse(req.url,true),pn=decodeURIComponent(p.pathname),m=req.method;
-
-  // Security headers
   res.setHeader('Access-Control-Allow-Origin','*');
   res.setHeader('Access-Control-Allow-Methods','GET,POST,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers','Content-Type,X-Admin-Token');
@@ -186,7 +199,6 @@ const server = http.createServer(async (req,res)=>{
 
   // Arquivos estáticos
   if(m==='GET'&&(pn.startsWith('/fotos/')||pn.startsWith('/logos/'))){
-    // Previne path traversal
     const safe=path.normalize(pn).replace(/^(\.\.(\/|\\|$))+/,'');
     const fp=path.join(__dirname,'public',safe);
     if(!fp.startsWith(path.join(__dirname,'public'))){res.writeHead(403);res.end();return;}
@@ -195,21 +207,27 @@ const server = http.createServer(async (req,res)=>{
     return;
   }
 
-  // Páginas HTML
-  if(m==='GET'&&pn==='/checkin'){sendHTML(res,checkinPage());return;}
-  if(m==='GET'&&pn==='/datashow'){sendHTML(res,datashowPage());return;}
-  if(m==='GET'&&pn==='/votar'){const vf=path.join(__dirname,'public','votar.html');sendHTML(res,fs.readFileSync(vf,'utf8'));return;}
+  // Páginas HTML especiais
+  if(m==='GET'&&pn==='/checkin')  {sendHTML(res,checkinPage());return;}
+  if(m==='GET'&&pn==='/cadastro') {sendHTML(res,cadastroPage());return;}
+  if(m==='GET'&&pn==='/datashow') {sendHTML(res,datashowPage());return;}
+  if(m==='GET'&&pn==='/votar')    {const vf=path.join(__dirname,'public','votar.html');sendHTML(res,fs.readFileSync(vf,'utf8'));return;}
 
+  // SPA admin
   if(!pn.startsWith('/api/')){
     const fp=path.join(__dirname,'public','index.html');
     if(fs.existsSync(fp))sendHTML(res,fs.readFileSync(fp,'utf8'));
-    else sendHTML(res,'<h1>Sistema de Eleição v'+VERSION+'</h1><p>index.html não encontrado.</p>');
+    else sendHTML(res,'<h1>'+APP_NAME+' v'+VERSION+'</h1><p>index.html não encontrado.</p>');
     return;
   }
 
   // ── API Pública ──────────────────────────────────────────────────────────
   if(m==='GET'&&pn==='/api/state'){
-    return sendJSON(res,{users:ST.users,candidatos:ST.candidatos,cargos:ST.cargos,presentes:ST.presentes,jaVotou:ST.jaVotou,elStatus:ST.elStatus,config:ST.config,version:VERSION});
+    return sendJSON(res,{
+      users:ST.users, candidatos:ST.candidatos, cargos:ST.cargos,
+      presentes:ST.presentes, jaVotou:ST.jaVotou, elStatus:ST.elStatus,
+      config:ST.config, version:VERSION,
+    });
   }
   if(m==='GET'&&pn==='/api/config'){return sendJSON(res,ST.config);}
 
@@ -223,65 +241,86 @@ const server = http.createServer(async (req,res)=>{
     });
   }
 
+  // Login admin
   if(m==='POST'&&pn==='/api/login'){
     const ip=getIP(req);
-    if(!checkRateLimit(ip)) return sendJSON(res,{error:'Muitas tentativas. Tente novamente em 15 minutos.'},429);
+    if(!checkRate(ip))return sendJSON(res,{error:'Muitas tentativas. Aguarde 15 minutos.'},429);
     const{cpf,pwd}=await jsonBody(req);
-    if(cpf==='admin'&&hashPwd(pwd)===ST.adminSenha){resetRateLimit(ip);const token=_mkSession();return sendJSON(res,{ok:true,role:'admin',token});}
+    if(cpf==='admin'&&hashPwd(pwd)===ST.adminSenha){resetRate(ip);return sendJSON(res,{ok:true,role:'admin',token:mkSession()});}
     return sendJSON(res,{error:'Credenciais inválidas.'},401);
   }
-  if(m==='POST'&&pn==='/api/logout'){_rmSession(getToken(req));return sendJSON(res,{ok:true});}
+  if(m==='POST'&&pn==='/api/logout'){rmSession(getToken(req));return sendJSON(res,{ok:true});}
   if(m==='GET'&&pn==='/api/auth/check'){return sendJSON(res,{valid:isAdmin(req),role:isAdmin(req)?'admin':null});}
 
+  // Login eleitor
   if(m==='POST'&&pn==='/api/login-eleitor'){
     const{cpf}=await jsonBody(req);
     const u=ST.users.find(x=>x.cpf===cpf);
-    if(!u) return sendJSON(res,{error:'CPF não encontrado no cadastro.'},401);
-    if(!ST.presentes.includes(u.id)) return sendJSON(res,{error:'Você não está marcado como presente.'},403);
-    if(ST.jaVotou.includes(u.id)) return sendJSON(res,{error:'Você já votou nesta eleição.'},403);
+    if(!u)return sendJSON(res,{error:'CPF não encontrado no cadastro.'},401);
+    if(!ST.presentes.includes(u.id))return sendJSON(res,{error:'Você não está marcado como presente.'},403);
+    if(ST.jaVotou.includes(u.id))return sendJSON(res,{error:'Você já votou nesta eleição.'},403);
     return sendJSON(res,{ok:true,user:{id:u.id,nome:u.nome,cpf:u.cpf},elStatus:ST.elStatus});
   }
 
+  // Votar
   if(m==='POST'&&pn==='/api/votar'){
     const{userId,votos}=await jsonBody(req);
-    if(!userId||!votos) return sendJSON(res,{error:'Dados inválidos.'},400);
-    if(ST.elStatus!=='ativa') return sendJSON(res,{error:'Eleição não está ativa.'},403);
-    if(!ST.presentes.includes(userId)) return sendJSON(res,{error:'Usuário não está presente.'},403);
-    if(ST.jaVotou.includes(userId)) return sendJSON(res,{error:'Usuário já votou.'},409);
+    if(!userId||!votos)return sendJSON(res,{error:'Dados inválidos.'},400);
+    if(ST.elStatus!=='ativa')return sendJSON(res,{error:'Eleição não está ativa.'},403);
+    if(!ST.presentes.includes(userId))return sendJSON(res,{error:'Usuário não está presente.'},403);
+    if(ST.jaVotou.includes(userId))return sendJSON(res,{error:'Usuário já votou.'},409);
     ST.cargos.forEach(g=>{
       if(!ST.resultados[g.id])ST.resultados[g.id]={branco:0};
       const sel=Array.isArray(votos[g.id])?votos[g.id]:[];
-      // Valida que os candidatos existem
-      const selValidos=sel.filter(cid=>ST.candidatos.find(c=>c.id===cid));
-      ST.resultados[g.id].branco+=(g.vagas-Math.min(selValidos.length,g.vagas));
-      selValidos.slice(0,g.vagas).forEach(cid=>{ST.resultados[g.id][cid]=(ST.resultados[g.id][cid]||0)+1;});
+      const sv=sel.filter(cid=>ST.candidatos.find(c=>c.id===cid)).slice(0,g.vagas);
+      ST.resultados[g.id].branco+=(g.vagas-sv.length);
+      sv.forEach(cid=>{ST.resultados[g.id][cid]=(ST.resultados[g.id][cid]||0)+1;});
     });
     ST.jaVotou.push(userId);saveState(ST);
     return sendJSON(res,{ok:true});
   }
 
+  // Resultados
   if(m==='GET'&&pn==='/api/resultados'){
-    if(ST.elStatus!=='encerrada') return sendJSON(res,{error:'Eleição ainda não encerrada.'},403);
+    if(ST.elStatus!=='encerrada')return sendJSON(res,{error:'Eleição ainda não encerrada.'},403);
     return sendJSON(res,{resultados:ST.resultados,cargos:ST.cargos,candidatos:ST.candidatos,apuracao:apurar(),totalPresentes:ST.presentes.length});
   }
 
+  // Check-in buscar
   if(m==='POST'&&pn==='/api/checkin/buscar'){
     const{cpf}=await jsonBody(req);
-    if(!cpf) return sendJSON(res,{error:'CPF obrigatório.'},400);
+    if(!cpf)return sendJSON(res,{error:'CPF obrigatório.'},400);
     const u=ST.users.find(x=>x.cpf===cpf);
-    if(!u) return sendJSON(res,{error:'CPF não encontrado.'},404);
+    if(!u)return sendJSON(res,{naoEncontrado:true,cpf});  // sinaliza para redirecionar ao cadastro
     return sendJSON(res,{ok:true,user:{id:u.id,nome:u.nome,cpf:u.cpf},jaPresente:ST.presentes.includes(u.id)});
   }
+
+  // Check-in confirmar
   if(m==='POST'&&pn==='/api/checkin/confirmar'){
     const{cpf}=await jsonBody(req);
     const u=ST.users.find(x=>x.cpf===cpf);
-    if(!u) return sendJSON(res,{error:'CPF não encontrado.'},404);
-    if(ST.presentes.includes(u.id)) return sendJSON(res,{ok:true,msg:'Presença já confirmada.',user:{id:u.id,nome:u.nome}});
+    if(!u)return sendJSON(res,{error:'CPF não encontrado.'},404);
+    if(ST.presentes.includes(u.id))return sendJSON(res,{ok:true,msg:'Presença já confirmada.',user:{id:u.id,nome:u.nome}});
     ST.presentes.push(u.id);saveState(ST);
     return sendJSON(res,{ok:true,msg:'Presença confirmada!',user:{id:u.id,nome:u.nome}});
   }
 
-  // ── A partir daqui: TODOS os endpoints exigem token admin ════════════════
+  // ── Auto-cadastro público (página /cadastro) ───────────────────────────────
+  // Permite que um membro se cadastre diretamente no check-in se não estiver no sistema
+  if(m==='POST'&&pn==='/api/cadastro-publico'){
+    const{nome,cpf}=await jsonBody(req);
+    if(!nome||!nome.trim())return sendJSON(res,{error:'Nome completo obrigatório.'},400);
+    if(!cpf)return sendJSON(res,{error:'CPF obrigatório.'},400);
+    const cpfLimpo=cpf.replace(/\D/g,'');
+    if(!validCPF(cpfLimpo))return sendJSON(res,{error:'CPF inválido. Verifique os dígitos.'},400);
+    const cpfFmt=fmtCPF(cpfLimpo);
+    if(ST.users.find(u=>u.cpf===cpfFmt))return sendJSON(res,{error:'Este CPF já está cadastrado.'},409);
+    const u={id:genId(),nome:nome.trim(),cpf:cpfFmt};
+    ST.users.push(u);saveState(ST);
+    return sendJSON(res,{ok:true,user:u});
+  }
+
+  // ══ A partir daqui: TODOS os endpoints exigem token admin ══════════════════
   if(!isAdmin(req)){deny(res);return;}
 
   // Config
@@ -309,7 +348,7 @@ const server = http.createServer(async (req,res)=>{
   if(m==='POST'&&pn==='/api/presenca/desmarcar-todos'){ST.presentes=[];saveState(ST);return sendJSON(res,{ok:true,presentes:ST.presentes});}
   if(m==='POST'&&pn.startsWith('/api/presenca/')){
     const id=pn.split('/')[3];
-    if(!ST.users.find(u=>u.id===id))return sendJSON(res,{error:'Usuário não encontrado.'},404);
+    if(!ST.users.find(u=>u.id===id))return sendJSON(res,{error:'Membro não encontrado.'},404);
     const idx=ST.presentes.indexOf(id);idx>=0?ST.presentes.splice(idx,1):ST.presentes.push(id);
     saveState(ST);return sendJSON(res,{ok:true,presentes:ST.presentes});
   }
@@ -320,40 +359,56 @@ const server = http.createServer(async (req,res)=>{
     return sendXLSX(res,buf,'lista-presenca.xlsx');
   }
 
-  // Usuários
+  // Membros — exportar CSV
   if(m==='GET'&&pn==='/api/usuarios/exportar'){
     const csv=toCSV(ST.users,['nome','cpf']);
-    res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="eleitores.csv"'});
+    res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="membros.csv"'});
     return res.end('\uFEFF'+csv);
   }
+
+  // Membros — importar CSV (texto)
   if(m==='POST'&&pn==='/api/usuarios/importar'){
-    const body=await jsonBody(req),rows=parseCSV(typeof body==='string'?body:body.csv||'');
-    let added=0,skipped=0;
-    for(const r of rows){
-      const nome=(r.nome||r['nome completo']||'').trim(),cpf=(r.cpf||'').trim();
-      if(!nome||!cpf||!validCPF(cpf.replace(/\D/g,''))||ST.users.find(u=>u.cpf===cpf)){skipped++;continue;}
-      ST.users.push({id:genId(),nome,cpf});added++;
-    }
-    saveState(ST);return sendJSON(res,{ok:true,added,skipped});
+    const body=await jsonBody(req);
+    const rows=parseCSV(typeof body==='string'?body:body.csv||'');
+    const result=importarMembros(rows);
+    saveState(ST);return sendJSON(res,{ok:true,...result});
   }
+
+  // Membros — importar XLSX (multipart)
+  if(m==='POST'&&pn==='/api/usuarios/importar-xlsx'){
+    const ct=req.headers['content-type']||'',bm=ct.match(/boundary=([^\s;]+)/);
+    if(!bm)return sendJSON(res,{error:'Content-Type inválido.'},400);
+    const parts=parseMultipart(await rawBody(req),bm[1]);
+    const file=parts['file']||parts['xlsx']||parts['arquivo'];
+    if(!file?.data)return sendJSON(res,{error:'Arquivo não enviado.'},400);
+    const parsed=readXLSX(file.data);
+    if(parsed.error)return sendJSON(res,{error:parsed.error},400);
+    const result=importarMembros(parsed.rows);
+    saveState(ST);return sendJSON(res,{ok:true,...result,erros:result.erros});
+  }
+
+  // Membros CRUD
   if(m==='POST'&&pn==='/api/usuarios'){
     const{nome,cpf}=await jsonBody(req);
     if(!nome||!cpf)return sendJSON(res,{error:'Nome e CPF obrigatórios.'},400);
-    const cpfClean=cpf.replace(/\D/g,'');
-    if(!validCPF(cpfClean))return sendJSON(res,{error:'CPF inválido.'},400);
-    if(ST.users.find(u=>u.cpf===cpf))return sendJSON(res,{error:'CPF já cadastrado.'},409);
-    const u={id:genId(),nome:nome.trim(),cpf};ST.users.push(u);saveState(ST);
+    const cpfLimpo=cpf.replace(/\D/g,'');
+    if(!validCPF(cpfLimpo))return sendJSON(res,{error:'CPF inválido.'},400);
+    const cpfFmt=fmtCPF(cpfLimpo);
+    if(ST.users.find(u=>u.cpf===cpfFmt))return sendJSON(res,{error:'CPF já cadastrado.'},409);
+    const u={id:genId(),nome:nome.trim(),cpf:cpfFmt};ST.users.push(u);saveState(ST);
     return sendJSON(res,{ok:true,user:u});
   }
   if(m==='PATCH'&&pn.startsWith('/api/usuarios/')){
     const id=pn.split('/')[3],u=ST.users.find(x=>x.id===id);
-    if(!u)return sendJSON(res,{error:'Usuário não encontrado.'},404);
+    if(!u)return sendJSON(res,{error:'Membro não encontrado.'},404);
     const b=await jsonBody(req);
     if(b.nome)u.nome=b.nome.trim();
     if(b.cpf&&b.cpf!==u.cpf){
-      if(!validCPF(b.cpf.replace(/\D/g,'')))return sendJSON(res,{error:'CPF inválido.'},400);
-      if(ST.users.find(x=>x.cpf===b.cpf&&x.id!==id))return sendJSON(res,{error:'CPF já em uso.'},409);
-      u.cpf=b.cpf;
+      const cl=b.cpf.replace(/\D/g,'');
+      if(!validCPF(cl))return sendJSON(res,{error:'CPF inválido.'},400);
+      const cf=fmtCPF(cl);
+      if(ST.users.find(x=>x.cpf===cf&&x.id!==id))return sendJSON(res,{error:'CPF já em uso.'},409);
+      u.cpf=cf;
     }
     saveState(ST);return sendJSON(res,{ok:true,user:u});
   }
@@ -369,8 +424,8 @@ const server = http.createServer(async (req,res)=>{
     const{userId,idade,desc}=await jsonBody(req);
     if(!userId)return sendJSON(res,{error:'userId obrigatório.'},400);
     const u=ST.users.find(x=>x.id===userId);
-    if(!u)return sendJSON(res,{error:'Usuário não encontrado.'},404);
-    if(ST.candidatos.find(c=>c.userId===userId))return sendJSON(res,{error:'Este usuário já é candidato.'},409);
+    if(!u)return sendJSON(res,{error:'Membro não encontrado.'},404);
+    if(ST.candidatos.find(c=>c.userId===userId))return sendJSON(res,{error:'Este membro já é candidato.'},409);
     const c={id:genId(),userId,nome:u.nome,idade:Number(idade)||0,fotoUrl:'',desc:(desc||'').trim()};
     ST.candidatos.push(c);saveState(ST);return sendJSON(res,{ok:true,candidato:c});
   }
@@ -409,7 +464,8 @@ const server = http.createServer(async (req,res)=>{
 
   // Eleição
   if(m==='POST'&&pn==='/api/eleicao/iniciar'){
-    if(!ST.presentes.length)return sendJSON(res,{error:'Marque presença de pelo menos 1 eleitor.'},400);
+    // v4.2: não exige quórum mínimo para iniciar, apenas 1+ presentes, 1+ cargos, 1+ candidatos
+    if(!ST.presentes.length)return sendJSON(res,{error:'Marque presença de pelo menos 1 membro.'},400);
     if(!ST.cargos.length)return sendJSON(res,{error:'Cadastre pelo menos 1 cargo.'},400);
     if(!ST.candidatos.length)return sendJSON(res,{error:'Cadastre pelo menos 1 candidato.'},400);
     ST.elStatus='ativa';saveState(ST);return sendJSON(res,{ok:true});
@@ -423,16 +479,16 @@ const server = http.createServer(async (req,res)=>{
     const ap=apurar(),sheets=[];
     sheets.push({name:'Resumo',rows:[
       [{v:APP_NAME+' v'+VERSION,bold:true,bg:'4472C4'},'',''],['','',''],
+      [{v:'Total de membros cadastrados',bold:true},ST.users.length,''],
       [{v:'Total de presentes',bold:true},ST.presentes.length,''],
       [{v:'Total de votantes',bold:true},ST.jaVotou.length,''],
       [{v:'Abstenções',bold:true},ST.presentes.length-ST.jaVotou.length,''],['','',''],
-      ...ap.map(a=>[{v:a.cargo.nome,bold:true},`${a.eleitos.length} eleito(s) de ${a.cargo.vagas} vaga(s)`,`Maioria: ${a.maioria} votos`]),
+      ...ap.map(a=>[{v:a.cargo.nome,bold:true},a.eleitos.length+' eleito(s) de '+a.cargo.vagas+' vaga(s)','Maioria: '+a.maioria+' votos']),
     ]});
     for(const a of ap){
       const hdr=[[{v:'#',bold:true,bg:'4472C4'},{v:'Candidato',bold:true,bg:'4472C4'},{v:'Votos',bold:true,bg:'4472C4'},{v:'% dos presentes',bold:true,bg:'4472C4'},{v:'Situação',bold:true,bg:'4472C4'}]];
       const rows=a.rank.map((r,i)=>{
-        const pct=ST.presentes.length>0?(r.v/ST.presentes.length*100).toFixed(1)+'%':'0%';
-        const el=a.eleitos.some(e=>e.cid===r.cid);
+        const pct=a.total>0?(r.v/a.total*100).toFixed(1)+'%':'0%',el=a.eleitos.some(e=>e.cid===r.cid);
         return[i+1,el?{v:r.c.nome,bold:true,bg:'70AD47'}:r.c.nome,el?{v:r.v,bold:true,bg:'70AD47'}:r.v,el?{v:pct,bold:true,bg:'70AD47'}:pct,el?{v:'ELEITO ✓',bold:true,bg:'70AD47'}:(r.v>0?'Não eleito':'Sem votos')];
       });
       if(a.branco>0)rows.push(['—','Votos em branco / nulos',a.branco,'—','—']);
@@ -498,7 +554,7 @@ input:focus{border-color:var(--p,#185FA5)}
     <p style="font-weight:700;font-size:17px;margin-bottom:14px;text-align:center">Confirme seus dados</p>
     <div class="row"><span class="rl">Nome</span><span class="rv" id="m-nome"></span></div>
     <div class="row"><span class="rl">CPF</span><span class="rv" id="m-cpf"></span></div>
-    <div class="row"><span class="rl">E-mail</span><span class="rv" id="m-email"></span></div>
+
     <div id="m-err" class="err" style="display:none"></div>
     <div class="btn-row">
       <button class="bc" onclick="fechar()">Cancelar</button>
@@ -525,6 +581,12 @@ input:focus{border-color:var(--p,#185FA5)}
   document.documentElement.style.setProperty('--s',c.corSecundaria||'#3B6D11');
   if(c.logoUrl) document.getElementById('logo-wrap').innerHTML='<img id="logo" src="'+c.logoUrl+'">';
   document.getElementById('nome-inst').textContent='Check-in — '+(c.nomeInstituicao||'Eleição');
+  // Pre-fill CPF se veio da página de cadastro
+  const urlCPF=new URLSearchParams(window.location.search).get('cpf');
+  if(urlCPF){
+    const inp=document.getElementById('cpf-in');
+    if(inp){inp.value=urlCPF;window.history.replaceState({},'','/checkin');}
+  }
 })();
 
 const fmt=v=>v.replace(/\\D/g,'').replace(/(\\d{3})(\\d{3})(\\d{3})(\\d{2})/,'$1.$2.$3-$4').slice(0,14);
@@ -546,6 +608,11 @@ async function buscar(){
     const r=await fetch('/api/checkin/buscar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf})});
     const d=await r.json();
     btn.disabled=false; btn.textContent='Confirmar presença';
+    if(d.naoEncontrado){
+      // CPF não cadastrado → redireciona para página de cadastro
+      window.location.href='/cadastro?cpf='+encodeURIComponent(cpf);
+      return;
+    }
     if(d.error){ err.className='err'; err.textContent=d.error; err.style.display='block'; return; }
     if(d.jaPresente){
       err.className='ok-msg';
@@ -558,7 +625,7 @@ async function buscar(){
     _cpf=cpf;
     document.getElementById('m-nome').textContent=d.user.nome;
     document.getElementById('m-cpf').textContent=d.user.cpf;
-    document.getElementById('m-email').textContent=d.user.email||'—';
+    
     document.getElementById('modal').style.display='flex';
   }catch(e){
     btn.disabled=false; btn.textContent='Confirmar presença';
@@ -1029,6 +1096,124 @@ function voltarLogin()  { App.user = null; App.tela = 'login'; render(); }
 </body>
 </html>`;
 }
+
+function cadastroPage() {
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cadastro de Membro</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg,#f0ede6);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+h1{font-size:21px;font-weight:700;margin-bottom:6px}
+.sub{font-size:13px;color:#888;margin-bottom:22px;line-height:1.5}
+label{font-size:12px;color:#666;display:block;margin-bottom:5px;font-weight:600}
+input{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid #ddd;font-size:16px;outline:none;transition:border-color .15s;background:#fafaf8;font-family:inherit}
+input:focus{border-color:var(--p,#185FA5)}
+.btn{width:100%;margin-top:14px;padding:13px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer;background:var(--p,#185FA5);color:#fff;transition:opacity .15s}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-sec{background:transparent;color:var(--p,#185FA5);border:1.5px solid var(--p,#185FA5);margin-top:10px}
+.err{background:#fcebeb;color:#a32d2d;border-radius:8px;padding:10px;font-size:13px;margin-top:10px}
+.ok-msg{background:#eaf3de;color:#3B6D11;border-radius:8px;padding:10px;font-size:13px;margin-top:10px;font-weight:600}
+.info{background:#e6f1fb;color:#185FA5;border-radius:8px;padding:10px;font-size:12px;margin-bottom:14px}
+.cpf-field{position:relative}
+</style>
+</head>
+<body>
+<div class="card">
+  <div id="logo-wrap" style="text-align:center;margin-bottom:12px"></div>
+  <div style="font-size:40px;text-align:center;margin-bottom:12px">📋</div>
+  <h1>Cadastro de Membro</h1>
+  <p class="sub">Seu CPF não foi encontrado no sistema. Preencha os dados abaixo para se cadastrar.</p>
+  <div class="info">Após o cadastro, você será redirecionado ao check-in para confirmar sua presença.</div>
+  <div class="field" style="margin-bottom:12px">
+    <label>Nome completo</label>
+    <input id="inp-nome" type="text" placeholder="Seu nome completo" autocomplete="name" spellcheck="false">
+  </div>
+  <div class="field">
+    <label>CPF</label>
+    <input id="inp-cpf" type="text" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="off">
+  </div>
+  <div id="msg" style="display:none"></div>
+  <button class="btn" id="btn-cad" onclick="cadastrar()">Cadastrar e ir para check-in</button>
+  <button class="btn btn-sec" onclick="window.location.href='/checkin'">← Voltar ao check-in</button>
+</div>
+
+<script>
+(async()=>{
+  const c=await(await fetch('/api/config')).json();
+  document.body.style.background=c.corFundo||'#f0ede6';
+  document.documentElement.style.setProperty('--p',c.corPrimaria||'#185FA5');
+  if(c.logoUrl) document.getElementById('logo-wrap').innerHTML='<img src="'+c.logoUrl+'" style="max-height:50px">';
+})();
+
+// Pre-fill CPF from query param (vindo do check-in)
+const urlCPF = new URLSearchParams(window.location.search).get('cpf');
+if(urlCPF) {
+  document.getElementById('inp-cpf').value = urlCPF;
+}
+
+function fmtCPF(v){
+  var d=v.replace(/\D/g,'');
+  if(d.length>9)  d=d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6,9)+'-'+d.slice(9);
+  else if(d.length>6) d=d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6);
+  else if(d.length>3) d=d.slice(0,3)+'.'+d.slice(3);
+  return d.slice(0,14);
+}
+
+var inp=document.getElementById('inp-cpf');
+inp.addEventListener('input',function(e){e.target.value=fmtCPF(e.target.value);});
+inp.addEventListener('keydown',function(e){if(e.key==='Enter')cadastrar();});
+document.getElementById('inp-nome').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('inp-cpf').focus();});
+
+async function cadastrar(){
+  var nome=(document.getElementById('inp-nome').value||'').trim();
+  var cpf=(document.getElementById('inp-cpf').value||'').trim();
+  var msg=document.getElementById('msg');
+  msg.style.display='none';
+
+  if(!nome){msg.className='err';msg.textContent='Digite seu nome completo.';msg.style.display='block';return;}
+  if(cpf.replace(/\D/g,'').length<11){msg.className='err';msg.textContent='Digite o CPF completo (11 dígitos).';msg.style.display='block';return;}
+
+  var btn=document.getElementById('btn-cad');
+  btn.disabled=true; btn.textContent='Cadastrando...';
+
+  try{
+    var r=await fetch('/api/cadastro-publico',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({nome:nome,cpf:cpf})
+    });
+    var d=await r.json();
+    btn.disabled=false; btn.textContent='Cadastrar e ir para check-in';
+
+    if(d.error){
+      msg.className='err'; msg.textContent=d.error; msg.style.display='block';
+      return;
+    }
+
+    // Sucesso — mostra mensagem e redireciona para check-in com CPF preenchido
+    msg.className='ok-msg';
+    msg.textContent='✓ Cadastro realizado com sucesso, '+d.user.nome+'! Redirecionando para o check-in...';
+    msg.style.display='block';
+    btn.style.display='none';
+    setTimeout(function(){
+      window.location.href='/checkin?cpf='+encodeURIComponent(d.user.cpf);
+    }, 2000);
+
+  }catch(e){
+    btn.disabled=false; btn.textContent='Cadastrar e ir para check-in';
+    msg.className='err'; msg.textContent='Erro de conexão. Tente novamente.'; msg.style.display='block';
+  }
+}
+</script>
+</body>
+</html>`;
+}
+
 
 function datashowPage() {
   return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
