@@ -457,40 +457,94 @@ async function importXLSX(input){
 
 // ─── TAB: PRESENÇA ────────────────────────────────────────────────────────────
 function tabPresenca(){
-  const naoVotou=S.users.filter(u=>S.presentes.includes(u.id)&&!S.jaVotou.includes(u.id));
-  const alerta=S.elStatus==='ativa'&&naoVotou.length>0
-    ?`<div class="warn-box" style="margin-bottom:12px"><strong>Ainda não votaram (${naoVotou.length}):</strong>${naoVotou.map(u=>`<br>· ${esc(u.nome)}`).join('')}</div>`:''
-  const list=S.users.map(u=>{
-    const p=S.presentes.includes(u.id),v=S.jaVotou.includes(u.id);
-    return`<div class="pres-item ${p?'p':''}" onclick="${v?'':(`presToggle('${u.id}')`)}" style="${v?'cursor:default':''}">
-      <div style="width:20px;height:20px;border-radius:50%;border:1.5px solid ${p?'#3B6D11':'#bbb'};background:${p?'#3B6D11':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:#fff;font-weight:700">${p?'✓':''}</div>
-      <div style="flex:1"><p style="font-size:13px;font-weight:600">${esc(u.nome)}</p><p style="font-size:11px;color:#888">${esc(u.cpf)}</p></div>
-      ${v?'<span class="badge bdg-ok">Votou</span>':p?'<span class="badge bdg-info">Presente</span>':''}
-    </div>`;
+  var totalMembros=S.users.length;
+  var totalPresentes=S.presentes.length;
+  var quorum=totalMembros>0?Math.ceil(totalMembros/2):0;
+  var quorumAtingido=totalPresentes>=quorum&&totalMembros>0;
+  var pct=totalMembros>0?Math.round(totalPresentes/totalMembros*100):0;
+
+  var naoVotou=S.users.filter(function(u){return S.presentes.some(function(p){return p.id===u.id;})&&!S.jaVotou.includes(u.id);});
+  var alerta=S.elStatus==='ativa'&&naoVotou.length>0
+    ?'<div class="warn-box" style="margin-bottom:12px"><strong>Ainda não votaram ('+naoVotou.length+'):</strong>'+naoVotou.map(function(u){return '<br>· '+esc(u.nome);}).join('')+'</div>':'';
+
+  var q=(_pFiltro||'').toLowerCase().trim();
+  var lista=S.users.slice();
+  if(q) lista=lista.filter(function(u){return u.nome.toLowerCase().includes(q)||u.cpf.includes(q);});
+  lista.sort(function(a,b){
+    if(_pOrdem==='nome-asc')  return a.nome.localeCompare(b.nome);
+    if(_pOrdem==='nome-desc') return b.nome.localeCompare(a.nome);
+    var da=S.presentes.find(function(p){return p.id===a.id;});
+    var db=S.presentes.find(function(p){return p.id===b.id;});
+    var ta=da&&da.dataHora?new Date(da.dataHora).getTime():0;
+    var tb=db&&db.dataHora?new Date(db.dataHora).getTime():0;
+    if(_pOrdem==='data-asc')  return ta-tb;
+    if(_pOrdem==='data-desc') return tb-ta;
+    return a.nome.localeCompare(b.nome);
+  });
+
+  var rows=lista.map(function(u){
+    var entry=S.presentes.find(function(p){return p.id===u.id;});
+    var p=!!entry, v=S.jaVotou.includes(u.id);
+    var dh=entry&&entry.dataHora?fmtDH(entry.dataHora):'—';
+    var row='<div class="pres-item'+(p?' p':'')+'"';
+    if(!v) row+=' onclick="presToggle(&quot;"+u.id+"&quot;)"';
+    if(v)  row+=' style="cursor:default"';
+    row+='>';
+    row+='<div style="width:20px;height:20px;border-radius:50%;border:1.5px solid '+(p?'#3B6D11':'#bbb')+';background:'+(p?'#3B6D11':'transparent')+';display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:#fff;font-weight:700">'+(p?'✓':'')+'</div>';
+    row+='<div style="flex:1">';
+    row+='<p style="font-size:13px;font-weight:600">'+esc(u.nome)+'</p>';
+    row+='<p style="font-size:11px;color:#888">'+esc(u.cpf)+'</p>';
+    if(p) row+='<p style="font-size:10px;color:#aaa;margin-top:2px">📅 '+dh+'</p>';
+    row+='</div>';
+    if(v)  row+='<span class="badge bdg-ok">Votou</span>';
+    else if(p) row+='<span class="badge bdg-info">Presente</span>';
+    row+='</div>';
+    return row;
   }).join('');
-  return`
-  <h3 style="font-weight:700;margin-bottom:8px">Lista de Presença</h3>
-  ${(()=>{
-    const totalMembros=S.users.length;
-    const totalPresentes=S.presentes.length;
-    const quorum=totalMembros>0?Math.ceil(totalMembros/2):0;
-    const quorumAtingido=totalPresentes>=quorum&&totalMembros>0;
-    const pct=totalMembros>0?Math.round(totalPresentes/totalMembros*100):0;
-    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">'
-      +'<span style="font-size:12px;color:#888">'+totalPresentes+' de '+totalMembros+' presentes ('+pct+'%)</span>'
-      +'·<span style="font-size:12px;color:#888">'+S.jaVotou.length+' votaram</span>'
-      +(quorumAtingido
-        ?'<span style="background:#eaf3de;color:#3B6D11;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">✓ Quórum mínimo atingido!</span>'
-        :'<span style="font-size:12px;color:#aaa">Quórum mínimo: '+quorum+' presentes</span>')
-      +'</div>';
-  })()}
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-    <button class="btn btn-s btn-sm" onclick="presMarcarTodos()">✓ Marcar todos</button>
-    <button class="btn btn-danger btn-sm" onclick="presDesmarcarTodos()">✗ Desmarcar todos</button>
-    <button class="btn btn-p btn-sm" onclick="exportarPresenca()">📊 Exportar .xlsx</button>
-  </div>
-  ${alerta}<div>${list}</div>`;
+
+  var quorumBadge=quorumAtingido
+    ?'<span style="background:#eaf3de;color:#3B6D11;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">✓ Quórum mínimo atingido!</span>'
+    :'<span style="font-size:12px;color:#aaa">Quórum mínimo: '+quorum+' presentes</span>';
+
+  var html='<h3 style="font-weight:700;margin-bottom:8px">Lista de Presença</h3>';
+  html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  html+='<span style="font-size:12px;color:#888">'+totalPresentes+' de '+totalMembros+' presentes ('+pct+'%)</span>';
+  html+=' · <span style="font-size:12px;color:#888">'+S.jaVotou.length+' votaram</span>';
+  html+=quorumBadge+'</div>';
+  html+='<div class="card" style="padding:12px 14px;margin-bottom:10px">';
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">';
+  html+='<div style="flex:1;min-width:160px"><label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:4px">Filtrar</label>';
+  html+='<input id="p-filter" class="input" placeholder="🔍 Nome ou CPF..." value="'+esc(_pFiltro)+'" style="margin:0" oninput="pFiltrar(this.value)"></div>';
+  html+='<div><label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:4px">Ordenar</label>';
+  html+='<select id="p-sort" class="input" style="margin:0;width:auto" onchange="pOrdenar(this.value)">';
+  html+='<option value="nome-asc"  '+(_pOrdem==='nome-asc'  ?'selected':'')+'>Nome A→Z</option>';
+  html+='<option value="nome-desc" '+(_pOrdem==='nome-desc' ?'selected':'')+'>Nome Z→A</option>';
+  html+='<option value="data-desc" '+(_pOrdem==='data-desc' ?'selected':'')+'>Check-in mais recente</option>';
+  html+='<option value="data-asc"  '+(_pOrdem==='data-asc'  ?'selected':'')+'>Check-in mais antigo</option>';
+  html+='</select></div></div></div>';
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  html+='<button class="btn btn-s btn-sm" onclick="presMarcarTodos()">✓ Marcar todos</button>';
+  html+='<button class="btn btn-danger btn-sm" onclick="presDesmarcarTodos()">✗ Desmarcar todos</button>';
+  html+='<button class="btn btn-p btn-sm" onclick="exportarPresenca()">📊 Exportar .xlsx</button>';
+  html+='</div>';
+  html+=alerta;
+  html+='<div>'+rows+'</div>';
+  return html;
 }
+
+var _pFiltro='', _pOrdem='nome-asc';
+
+function fmtDH(iso){
+  if(!iso)return '—';
+  try{
+    var d=new Date(iso);
+    return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }catch(e){return '—';}
+}
+function pFiltrar(q){ _pFiltro=q; var el=$('tab-content'); if(el)el.innerHTML=tabPresenca(); }
+function pOrdenar(v){ _pOrdem=v;  var el=$('tab-content'); if(el)el.innerHTML=tabPresenca(); }
+
+
 async function presToggle(id)       { await api.post('/api/presenca/'+id,{});await renderTab(); }
 async function presMarcarTodos()    { await api.post('/api/presenca/marcar-todos',{});   toast('Todos marcados!','success'); await renderTab(); }
 async function presDesmarcarTodos() { await api.post('/api/presenca/desmarcar-todos',{}); toast('Desmarcados.','warn');    await renderTab(); }
@@ -502,49 +556,52 @@ function tabCandidatos(){
   const candIds=S.candidatos.map(c=>c.userId);
   const disp=S.users.filter(u=>!candIds.includes(u.id));
   const selHtml=disp.length>0
-    ?`<div class="field"><label>Selecionar membro</label>
-      <select id="c-userid" class="input">
-        <option value="">-- Escolha um membro --</option>
-        ${disp.map(u=>`<option value="${esc(u.id)}">${esc(u.nome)} — CPF: ${esc(u.cpf)}</option>`).join('')}
-      </select></div>`
-    :`<div class="warn-box">Todos os membros já são candidatos ou não há membros cadastrados.</div>`;
-  const list=S.candidatos.map(c=>`
-    <div class="card-sm" style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-      ${c.fotoUrl
-        ?`<img src="${esc(c.fotoUrl)}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;border:1px solid #ddd;flex-shrink:0">`
-        :`<div style="width:48px;height:48px;border-radius:50%;background:#faeeda;display:flex;align-items:center;justify-content:center;font-size:11px;color:#854F0B;text-align:center;flex-shrink:0;line-height:1.2;padding:4px;font-weight:600">Sem<br>foto</div>`}
-      <div style="flex:1">
-        <p style="font-weight:600;font-size:13px">${esc(c.nome)}</p>
-        <p style="font-size:11px;color:#888">${c.idade} anos · ${esc((c.desc||'').slice(0,55))}${(c.desc||'').length>55?'...':''}</p>
-        ${!c.fotoUrl?`<p style="font-size:10px;color:#a32d2d;font-weight:600;margin-top:2px">⚠ Foto obrigatória</p>`:''}
-      </div>
-      <label class="btn ${c.fotoUrl?'btn-p':'btn-danger'} btn-sm" style="cursor:pointer">
-        ${c.fotoUrl?'📷 Trocar':'📷 Adicionar foto'}
-        <input type="file" accept="image/*" style="display:none" onchange="uploadFoto('${c.id}',this)">
-      </label>
-      <button class="btn btn-danger btn-sm" onclick="delCand('${c.id}')">×</button>
-    </div>`).join('');
-  return`
-  <h3 style="font-weight:700;margin-bottom:14px">Candidatos (${S.candidatos.length})</h3>
-  ${S.candidatos.some(c=>!c.fotoUrl)?'<div class="warn-box" style="margin-bottom:12px">⚠ Candidatos sem foto não aparecerão corretamente nas cédulas. Adicione a foto de cada um.</div>':''}
-  <div class="card" style="margin-bottom:14px">
-    ${selHtml}
-    <div class="grid2" style="gap:10px;margin-top:10px">
-      <div class="field" style="margin:0"><label>Idade</label><input id="c-idade" class="input" type="number" min="1" placeholder="Idade"></div>
-      <div class="field" style="margin:0">
-        <label>Foto <span style="color:#a32d2d">*</span> obrigatória</label>
-        <label class="btn btn-p btn-sm" style="cursor:pointer;width:fit-content;margin-top:2px">
-          📷 Escolher foto
-          <input type="file" id="c-foto-in" accept="image/*" style="display:none" onchange="prevFoto(this)">
-        </label>
-        <div id="c-foto-prev" style="margin-top:6px"></div>
-      </div>
-    </div>
-    <div class="field" style="margin-top:10px"><label>Histórico / Descrição</label><textarea id="c-desc" class="input" rows="2" placeholder="Breve histórico..."></textarea></div>
-    <button class="btn btn-p" onclick="addCand()">+ Adicionar candidato</button>
-  </div>
-  <div>${list}</div>`;
+    ?'<div class="field"><label>Selecionar membro</label>'
+      +'<select id="c-userid" class="input">'
+        +'<option value="">-- Escolha um membro --</option>'
+        +disp.map(u=>'<option value="'+esc(u.id)+'">'+esc(u.nome)+' — CPF: '+esc(u.cpf)+'</option>').join('')
+      +'</select></div>'
+    :'<div class="warn-box">Todos os membros já são candidatos ou não há membros cadastrados.</div>';
+
+  const list=S.candidatos.map(c=>
+    '<div class="card-sm" style="display:flex;align-items:center;gap:12px;margin-bottom:8px">'
+      +(c.fotoUrl
+        ?'<img src="'+esc(c.fotoUrl)+'" style="width:48px;height:48px;border-radius:50%;object-fit:cover;border:1px solid #ddd;flex-shrink:0">'
+        :'<div style="width:48px;height:48px;border-radius:50%;background:#faeeda;display:flex;align-items:center;justify-content:center;font-size:11px;color:#854F0B;text-align:center;flex-shrink:0;line-height:1.2;padding:4px;font-weight:600">Sem<br>foto</div>')
+      +'<div style="flex:1">'
+        +'<p style="font-weight:600;font-size:13px">'+esc(c.nome)+'</p>'
+        +'<p style="font-size:11px;color:#888">'+c.idade+' anos</p>'
+        +(!c.fotoUrl?'<p style="font-size:10px;color:#a32d2d;font-weight:600;margin-top:2px">⚠ Foto obrigatória</p>':'')
+      +'</div>'
+      +'<label class="btn '+(c.fotoUrl?'btn-p':'btn-danger')+' btn-sm" style="cursor:pointer">'
+        +(c.fotoUrl?'📷 Trocar':'📷 Adicionar foto')
+        +'<input type="file" accept="image/*" style="display:none" onchange="uploadFoto(&quot;"+c.id+"&quot;,this)">'
+      +'</label>'
+      +'<button class="btn btn-danger btn-sm" onclick="delCand(&quot;"+c.id+"&quot;)">×</button>'
+    +'</div>'
+  ).join('');
+
+  return '<h3 style="font-weight:700;margin-bottom:14px">Candidatos ('+S.candidatos.length+')</h3>'
+    +(S.candidatos.some(c=>!c.fotoUrl)?'<div class="warn-box" style="margin-bottom:12px">⚠ Candidatos sem foto não aparecerão corretamente nas cédulas. Adicione a foto de cada um.</div>':'')
+    +'<div class="card" style="margin-bottom:14px">'
+      +selHtml
+      +'<div class="field" style="margin-top:10px">'
+        +'<label>Idade</label>'
+        +'<input id="c-idade" class="input" type="number" min="1" placeholder="Idade" style="max-width:120px">'
+      +'</div>'
+      +'<div class="field">'
+        +'<label>Foto <span style="color:#a32d2d">*</span> obrigatória</label>'
+        +'<label class="btn btn-p btn-sm" style="cursor:pointer;width:fit-content;margin-top:2px">'
+          +'📷 Escolher foto'
+          +'<input type="file" id="c-foto-in" accept="image/*" style="display:none" onchange="prevFoto(this)">'
+        +'</label>'
+        +'<div id="c-foto-prev" style="margin-top:6px"></div>'
+      +'</div>'
+      +'<button class="btn btn-p" onclick="addCand()">+ Adicionar candidato</button>'
+    +'</div>'
+    +'<div>'+list+'</div>';
 }
+
 
 function prevFoto(input){
   const file=input.files[0];if(!file)return;
@@ -554,11 +611,11 @@ function prevFoto(input){
   r.readAsDataURL(file);
 }
 async function addCand(){
-  const userId=($('c-userid')?$('c-userid').value:''),idade=($('c-idade').value||'').trim(),desc=($('c-desc').value||'').trim();
+  const userId=($('c-userid')?$('c-userid').value:''),idade=($('c-idade').value||'').trim();
   if(!userId)     {toast('Selecione um membro.','warn');return;}
   if(!idade)      {toast('Informe a idade.','warn');return;}
   if(!_fotoCandFile){toast('A foto é obrigatória.','warn');return;}
-  const res=await api.post('/api/candidatos',{userId,idade,desc});
+  const res=await api.post('/api/candidatos',{userId,idade});
   if(res.error){toast(res.error,'danger');return;}
   const fr=await api.upload('/api/candidatos/'+res.candidato.id+'/foto','foto',_fotoCandFile);
   if(fr.error)toast('Candidato criado, mas erro na foto: '+fr.error,'warn');
@@ -609,7 +666,7 @@ function tabEleicao(){
   if(st==='aguardando'){badge='<span class="badge bdg-gray">Aguardando</span>';msg='<p style="font-size:12px;color:#888;margin-bottom:12px">Marque presença, cadastre cargos e candidatos antes de iniciar.</p>';btn='<button class="btn btn-s btn-full" onclick="elIniciar()">▶ Iniciar Eleição</button>';}
   else if(st==='ativa'){badge='<span class="badge bdg-ok">Em andamento</span>';msg=`<p style="font-size:12px;color:#888;margin-bottom:12px">${S.presentes.length-S.jaVotou.length} eleitor(es) ainda não votou.</p>`;btn='<button class="btn btn-danger btn-full" onclick="elEncerrar()">⏹ Encerrar Eleição</button>';}
   else{badge='<span class="badge bdg-warn">Encerrada</span>';msg='<p style="font-size:12px;color:#888;margin-bottom:12px">Veja os resultados na aba Resultados.</p>';btn='<button class="btn btn-warn btn-full" onclick="elReiniciar()">🔄 Reiniciar (apaga todos os votos)</button>';}
-  const naoVotou=S.users.filter(u=>S.presentes.includes(u.id)&&!S.jaVotou.includes(u.id));
+  const naoVotou=S.users.filter(u=>S.presentes.some(p=>p.id===u.id)&&!S.jaVotou.includes(u.id));
   const nvHtml=st==='ativa'?`
     <div class="card" style="margin-top:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
