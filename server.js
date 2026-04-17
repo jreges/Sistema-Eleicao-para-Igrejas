@@ -1,14 +1,12 @@
 /**
- * Eleição de Oficiais da Igreja — Servidor v4.2
+ * Eleição de Oficiais da Igreja — Servidor v4.6
  * Node.js puro, zero dependências externas.
  *
- * Novidades v4.2:
- *  - Aba "usuários" renomeada para "membros"
- *  - Contador de membros na página membros
- *  - Presença: aviso de quórum mínimo (≥50% membros cadastrados)
- *  - Importação de membros via CSV e XLSX
- *  - Check-in: CPF não encontrado → redireciona para cadastro próprio
- *  - Rate limiting no login
+ * v4.6:
+ *  - presentes: [{id, dataHora}] — registra data/hora de cada check-in
+ *  - migração automática de presentes legados (array de strings)
+ *  - filtro e ordenação na presença (frontend)
+ *  - candidatos sem campo descrição
  */
 'use strict';
 const http   = require('http');
@@ -24,9 +22,9 @@ const DATA_FILE = path.join(__dirname, 'data', 'state.json');
 const FOTOS_DIR = path.join(__dirname, 'public', 'fotos');
 const LOGO_DIR  = path.join(__dirname, 'public', 'logos');
 const APP_NAME  = 'Eleição de Oficiais da Igreja';
-const VERSION   = '4.2';
+const VERSION   = '4.6';
 
-// ─── Rate Limiting (login) ────────────────────────────────────────────────────
+// ─── Rate Limiting ────────────────────────────────────────────────────────────
 const _loginAttempts = new Map();
 const RATE_LIMIT = 5, RATE_WINDOW = 15 * 60 * 1000;
 function checkRate(ip) {
@@ -46,8 +44,37 @@ function mkSession()  { const t=newToken(); _sessions.set(t,{exp:Date.now()+8*36
 function rmSession(t) { _sessions.delete(t); }
 setInterval(()=>{ const n=Date.now(); for(const[k,v]of _sessions)if(n>v.exp)_sessions.delete(k); }, 3600*1000);
 
-// ─── Hash ─────────────────────────────────────────────────────────────────────
 function hashPwd(s) { return crypto.createHash('sha256').update(s+'eleicao_salt_2024').digest('hex'); }
+
+// ─── Helpers de presença ───────────────────────────────────────────────────────
+// presentes é sempre [{id: string, dataHora: string ISO}]
+// Funções para abstrair e garantir compatibilidade com dados antigos
+
+function presIds(presentes) {
+  // Aceita tanto [{id,dataHora}] quanto [string] (legado)
+  return presentes.map(p => typeof p === 'string' ? p : p.id);
+}
+function presIncludes(presentes, id) {
+  return presIds(presentes).includes(id);
+}
+function presAdd(presentes, id) {
+  presentes.push({ id, dataHora: new Date().toISOString() });
+}
+function presRemove(presentes, id) {
+  const idx = presIds(presentes).indexOf(id);
+  if (idx >= 0) presentes.splice(idx, 1);
+}
+function presFindEntry(presentes, id) {
+  return presentes.find(p => (typeof p === 'string' ? p : p.id) === id);
+}
+
+// ─── Migração de presentes legados ────────────────────────────────────────────
+function migrarPresentes(presentes) {
+  return presentes.map(p => {
+    if (typeof p === 'string') return { id: p, dataHora: null }; // sem data conhecida
+    return p;
+  });
+}
 
 // ─── Estado padrão ────────────────────────────────────────────────────────────
 const DEFAULT = {
@@ -55,16 +82,14 @@ const DEFAULT = {
     { id:'u1', nome:'Ana Oliveira', cpf:'111.111.111-11' },
     { id:'u2', nome:'Bruno Santos', cpf:'222.222.222-22' },
     { id:'u3', nome:'Carla Mendes', cpf:'333.333.333-33' },
-    { id:'u4', nome:'Diego Lima',   cpf:'444.444.444-44' },
-    { id:'u5', nome:'Elisa Nunes',  cpf:'555.555.555-55' },
-    { id:'u6', nome:'Fábio Costa',  cpf:'666.666.666-66' },
   ],
   candidatos: [
-    { id:'c1', userId:'u1', nome:'Ana Oliveira', idade:42, fotoUrl:'', desc:'15 anos de serviço.' },
-    { id:'c2', userId:'u2', nome:'Bruno Santos', idade:38, fotoUrl:'', desc:'Formação teológica.' },
+    { id:'c1', userId:'u1', nome:'Ana Oliveira', idade:42, fotoUrl:'' },
+    { id:'c2', userId:'u2', nome:'Bruno Santos', idade:38, fotoUrl:'' },
   ],
-  cargos:     [ { id:'g1', nome:'Diácono', vagas:2 }, { id:'g2', nome:'Presbítero', vagas:1 } ],
-  presentes:  [], jaVotou: [], resultados: {}, elStatus: 'aguardando',
+  cargos:    [ { id:'g1', nome:'Diácono', vagas:2 }, { id:'g2', nome:'Presbítero', vagas:1 } ],
+  presentes: [],   // [{id, dataHora}]
+  jaVotou:   [], resultados: {}, elStatus: 'aguardando',
   config: { nomeInstituicao:APP_NAME, logoUrl:'', corPrimaria:'#185FA5', corSecundaria:'#3B6D11', corFundo:'#f0ede6', corTexto:'#1a1a18' },
   adminSenha: hashPwd('admin'),
 };
@@ -77,7 +102,9 @@ function loadState() {
       if (!s.config)     s.config     = {...DEFAULT.config};
       if (!s.adminSenha) s.adminSenha = DEFAULT.adminSenha;
       s.users      = (s.users||[]).map(u=>({id:u.id,nome:u.nome,cpf:u.cpf}));
-      s.candidatos = (s.candidatos||[]).map(c=>({userId:'',fotoUrl:'',desc:'',...c}));
+      s.candidatos = (s.candidatos||[]).map(c=>({userId:'',fotoUrl:'',...c,desc:undefined}));
+      // Migração automática: presentes legados (array de strings → objetos)
+      s.presentes  = migrarPresentes(s.presentes||[]);
       if (!s.config.nomeInstituicao||s.config.nomeInstituicao==='Igreja / Instituição') s.config.nomeInstituicao=APP_NAME;
       return s;
     }
@@ -99,31 +126,34 @@ function validCPF(cpf) {
   let s=0;for(let i=0;i<9;i++)s+=+cpf[i]*(10-i);let r=(s*10)%11;if(r>=10)r=0;if(r!==+cpf[9])return false;
   s=0;for(let i=0;i<10;i++)s+=+cpf[i]*(11-i);r=(s*10)%11;if(r>=10)r=0;return r===+cpf[10];
 }
-
-// ─── Normaliza CPF (garante formato 000.000.000-00) ───────────────────────────
 function fmtCPF(cpf) {
-  const d = cpf.replace(/\D/g,'');
-  if (d.length !== 11) return cpf;
+  const d=cpf.replace(/\D/g,'');
+  if(d.length!==11)return cpf;
   return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
+}
+
+// ─── Formata data/hora BR ─────────────────────────────────────────────────────
+function fmtDataHora(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  } catch { return '—'; }
 }
 
 // ─── CSV ──────────────────────────────────────────────────────────────────────
 function parseCSV(text) {
-  const lines=text.trim().split(/\r?\n/);
-  if(lines.length<2)return[];
+  const lines=text.trim().split(/\r?\n/);if(lines.length<2)return[];
   const hdr=lines[0].split(',').map(h=>h.trim().replace(/^"|"$/g,'').toLowerCase());
-  return lines.slice(1).map(line=>{
-    const vals=line.split(',').map(v=>v.trim().replace(/^"|"$/g,''));
-    const o={};hdr.forEach((h,i)=>o[h]=vals[i]||'');return o;
-  });
+  return lines.slice(1).map(line=>{const vals=line.split(',').map(v=>v.trim().replace(/^"|"$/g,''));const o={};hdr.forEach((h,i)=>o[h]=vals[i]||'');return o;});
 }
 function toCSV(rows,headers) {
   return[headers.join(','),...rows.map(r=>headers.map(h=>`"${(r[h]||'').toString().replace(/"/g,'""')}"`).join(','))].join('\n');
 }
 
-// ─── Importação comum (CSV ou XLSX rows) ──────────────────────────────────────
+// ─── Importação de membros ────────────────────────────────────────────────────
 function importarMembros(rows) {
-  let added=0, skipped=0, erros=[];
+  let added=0,skipped=0,erros=[];
   for(const r of rows){
     const nome=(r.nome||r['nome completo']||r['name']||'').trim();
     const cpfRaw=(r.cpf||r['cpf membro']||'').trim();
@@ -141,10 +171,8 @@ function importarMembros(rows) {
 function parseMultipart(buf,boundary){
   const parts={},sep=Buffer.from('--'+boundary);let pos=0;
   while(pos<buf.length){
-    const start=buf.indexOf(sep,pos);if(start===-1)break;
-    pos=start+sep.length;
-    if(buf[pos]===45&&buf[pos+1]===45)break;
-    if(buf[pos]===13)pos+=2;
+    const start=buf.indexOf(sep,pos);if(start===-1)break;pos=start+sep.length;
+    if(buf[pos]===45&&buf[pos+1]===45)break;if(buf[pos]===13)pos+=2;
     const he=buf.indexOf('\r\n\r\n',pos);if(he===-1)break;
     const hs=buf.slice(pos,he).toString();pos=he+4;
     const ns=buf.indexOf(sep,pos),de=ns===-1?buf.length:ns-2;
@@ -168,13 +196,7 @@ function getToken(req){const p=url.parse(req.url,true);return req.headers['x-adm
 function isAdmin(req) {return sessionOk(getToken(req));}
 function deny(res)    {sendJSON(res,{error:'Não autorizado. Faça login como administrador.'},401);}
 function getIP(req)   {return req.headers['x-forwarded-for']?.split(',')[0]||req.socket.remoteAddress||'unknown';}
-
-// ─── Sanitização ──────────────────────────────────────────────────────────────
-function safeExt(filename){
-  const ok=['.jpg','.jpeg','.png','.gif','.webp'];
-  const ext=path.extname(filename||'').toLowerCase();
-  return ok.includes(ext)?ext:'.jpg';
-}
+function safeExt(fn)  {const ok=['.jpg','.jpeg','.png','.gif','.webp'];const e=path.extname(fn||'').toLowerCase();return ok.includes(e)?e:'.jpg';}
 
 // ─── Apuração ─────────────────────────────────────────────────────────────────
 function apurar(){
@@ -207,32 +229,43 @@ const server = http.createServer(async(req,res)=>{
     return;
   }
 
-  // Páginas HTML especiais
+  // Páginas HTML
   if(m==='GET'&&pn==='/checkin')  {sendHTML(res,checkinPage());return;}
   if(m==='GET'&&pn==='/cadastro') {sendHTML(res,cadastroPage());return;}
   if(m==='GET'&&pn==='/datashow') {sendHTML(res,datashowPage());return;}
   if(m==='GET'&&pn==='/votar')    {const vf=path.join(__dirname,'public','votar.html');sendHTML(res,fs.readFileSync(vf,'utf8'));return;}
 
-  // SPA admin
   if(!pn.startsWith('/api/')){
     const fp=path.join(__dirname,'public','index.html');
     if(fs.existsSync(fp))sendHTML(res,fs.readFileSync(fp,'utf8'));
-    else sendHTML(res,'<h1>'+APP_NAME+' v'+VERSION+'</h1><p>index.html não encontrado.</p>');
+    else sendHTML(res,'<h1>'+APP_NAME+' v'+VERSION+'</h1>');
     return;
   }
 
   // ── API Pública ──────────────────────────────────────────────────────────
   if(m==='GET'&&pn==='/api/state'){
+    // Enriquece presentes com dados do usuário para o frontend
+    const presentesRich = ST.presentes.map(p=>{
+      const u = ST.users.find(x=>x.id===(typeof p==='string'?p:p.id));
+      return {
+        id: typeof p==='string'?p:p.id,
+        dataHora: typeof p==='string'?null:p.dataHora,
+        nome: u?u.nome:'',
+        cpf:  u?u.cpf:'',
+      };
+    });
     return sendJSON(res,{
       users:ST.users, candidatos:ST.candidatos, cargos:ST.cargos,
-      presentes:ST.presentes, jaVotou:ST.jaVotou, elStatus:ST.elStatus,
+      presentes:presentesRich,
+      jaVotou:ST.jaVotou, elStatus:ST.elStatus,
       config:ST.config, version:VERSION,
     });
   }
   if(m==='GET'&&pn==='/api/config'){return sendJSON(res,ST.config);}
 
   if(m==='GET'&&pn==='/api/datashow'){
-    const naoVotouCount=ST.users.filter(u=>ST.presentes.includes(u.id)&&!ST.jaVotou.includes(u.id)).length;
+    const ids=presIds(ST.presentes);
+    const naoVotouCount=ids.filter(id=>!ST.jaVotou.includes(id)).length;
     const ap=ST.elStatus==='encerrada'?apurar():null;
     return sendJSON(res,{
       elStatus:ST.elStatus,presentes:ST.presentes.length,jaVotou:ST.jaVotou.length,naoVotouCount,
@@ -241,7 +274,6 @@ const server = http.createServer(async(req,res)=>{
     });
   }
 
-  // Login admin
   if(m==='POST'&&pn==='/api/login'){
     const ip=getIP(req);
     if(!checkRate(ip))return sendJSON(res,{error:'Muitas tentativas. Aguarde 15 minutos.'},429);
@@ -252,22 +284,20 @@ const server = http.createServer(async(req,res)=>{
   if(m==='POST'&&pn==='/api/logout'){rmSession(getToken(req));return sendJSON(res,{ok:true});}
   if(m==='GET'&&pn==='/api/auth/check'){return sendJSON(res,{valid:isAdmin(req),role:isAdmin(req)?'admin':null});}
 
-  // Login eleitor
   if(m==='POST'&&pn==='/api/login-eleitor'){
     const{cpf}=await jsonBody(req);
     const u=ST.users.find(x=>x.cpf===cpf);
     if(!u)return sendJSON(res,{error:'CPF não encontrado no cadastro.'},401);
-    if(!ST.presentes.includes(u.id))return sendJSON(res,{error:'Você não está marcado como presente.'},403);
+    if(!presIncludes(ST.presentes,u.id))return sendJSON(res,{error:'Você não está marcado como presente.'},403);
     if(ST.jaVotou.includes(u.id))return sendJSON(res,{error:'Você já votou nesta eleição.'},403);
     return sendJSON(res,{ok:true,user:{id:u.id,nome:u.nome,cpf:u.cpf},elStatus:ST.elStatus});
   }
 
-  // Votar
   if(m==='POST'&&pn==='/api/votar'){
     const{userId,votos}=await jsonBody(req);
     if(!userId||!votos)return sendJSON(res,{error:'Dados inválidos.'},400);
     if(ST.elStatus!=='ativa')return sendJSON(res,{error:'Eleição não está ativa.'},403);
-    if(!ST.presentes.includes(userId))return sendJSON(res,{error:'Usuário não está presente.'},403);
+    if(!presIncludes(ST.presentes,userId))return sendJSON(res,{error:'Usuário não está presente.'},403);
     if(ST.jaVotou.includes(userId))return sendJSON(res,{error:'Usuário já votou.'},409);
     ST.cargos.forEach(g=>{
       if(!ST.resultados[g.id])ST.resultados[g.id]={branco:0};
@@ -280,33 +310,29 @@ const server = http.createServer(async(req,res)=>{
     return sendJSON(res,{ok:true});
   }
 
-  // Resultados
   if(m==='GET'&&pn==='/api/resultados'){
     if(ST.elStatus!=='encerrada')return sendJSON(res,{error:'Eleição ainda não encerrada.'},403);
     return sendJSON(res,{resultados:ST.resultados,cargos:ST.cargos,candidatos:ST.candidatos,apuracao:apurar(),totalPresentes:ST.presentes.length});
   }
 
-  // Check-in buscar
   if(m==='POST'&&pn==='/api/checkin/buscar'){
     const{cpf}=await jsonBody(req);
     if(!cpf)return sendJSON(res,{error:'CPF obrigatório.'},400);
     const u=ST.users.find(x=>x.cpf===cpf);
-    if(!u)return sendJSON(res,{naoEncontrado:true,cpf});  // sinaliza para redirecionar ao cadastro
-    return sendJSON(res,{ok:true,user:{id:u.id,nome:u.nome,cpf:u.cpf},jaPresente:ST.presentes.includes(u.id)});
+    if(!u)return sendJSON(res,{naoEncontrado:true,cpf});
+    const entry=presFindEntry(ST.presentes,u.id);
+    return sendJSON(res,{ok:true,user:{id:u.id,nome:u.nome,cpf:u.cpf},jaPresente:!!entry,dataHora:entry&&entry.dataHora||null});
   }
 
-  // Check-in confirmar
   if(m==='POST'&&pn==='/api/checkin/confirmar'){
     const{cpf}=await jsonBody(req);
     const u=ST.users.find(x=>x.cpf===cpf);
     if(!u)return sendJSON(res,{error:'CPF não encontrado.'},404);
-    if(ST.presentes.includes(u.id))return sendJSON(res,{ok:true,msg:'Presença já confirmada.',user:{id:u.id,nome:u.nome}});
-    ST.presentes.push(u.id);saveState(ST);
+    if(presIncludes(ST.presentes,u.id))return sendJSON(res,{ok:true,msg:'Presença já confirmada.',user:{id:u.id,nome:u.nome}});
+    presAdd(ST.presentes,u.id);saveState(ST);
     return sendJSON(res,{ok:true,msg:'Presença confirmada!',user:{id:u.id,nome:u.nome}});
   }
 
-  // ── Auto-cadastro público (página /cadastro) ───────────────────────────────
-  // Permite que um membro se cadastre diretamente no check-in se não estiver no sistema
   if(m==='POST'&&pn==='/api/cadastro-publico'){
     const{nome,cpf}=await jsonBody(req);
     if(!nome||!nome.trim())return sendJSON(res,{error:'Nome completo obrigatório.'},400);
@@ -320,7 +346,7 @@ const server = http.createServer(async(req,res)=>{
     return sendJSON(res,{ok:true,user:u});
   }
 
-  // ══ A partir daqui: TODOS os endpoints exigem token admin ══════════════════
+  // ══ Endpoints Admin ════════════════════════════════════════════════════════
   if(!isAdmin(req)){deny(res);return;}
 
   // Config
@@ -334,8 +360,6 @@ const server = http.createServer(async(req,res)=>{
     fs.writeFileSync(path.join(LOGO_DIR,fn),file.data);
     ST.config.logoUrl='/logos/'+fn;saveState(ST);return sendJSON(res,{ok:true,logoUrl:ST.config.logoUrl});
   }
-
-  // Admin senha
   if(m==='POST'&&pn==='/api/admin/senha'){
     const{senhaAtual,novaSenha}=await jsonBody(req);
     if(hashPwd(senhaAtual)!==ST.adminSenha)return sendJSON(res,{error:'Senha atual incorreta.'},403);
@@ -343,38 +367,58 @@ const server = http.createServer(async(req,res)=>{
     ST.adminSenha=hashPwd(novaSenha);saveState(ST);return sendJSON(res,{ok:true});
   }
 
-  // Presença
-  if(m==='POST'&&pn==='/api/presenca/marcar-todos'){ST.presentes=ST.users.map(u=>u.id);saveState(ST);return sendJSON(res,{ok:true,presentes:ST.presentes});}
-  if(m==='POST'&&pn==='/api/presenca/desmarcar-todos'){ST.presentes=[];saveState(ST);return sendJSON(res,{ok:true,presentes:ST.presentes});}
+  // Presença — marcar/desmarcar com timestamp
+  if(m==='POST'&&pn==='/api/presenca/marcar-todos'){
+    ST.presentes=ST.users.map(u=>{
+      const ex=presFindEntry(ST.presentes,u.id);
+      return ex||{id:u.id,dataHora:new Date().toISOString()};
+    });
+    saveState(ST);return sendJSON(res,{ok:true});
+  }
+  if(m==='POST'&&pn==='/api/presenca/desmarcar-todos'){
+    ST.presentes=[];saveState(ST);return sendJSON(res,{ok:true});
+  }
   if(m==='POST'&&pn.startsWith('/api/presenca/')){
     const id=pn.split('/')[3];
     if(!ST.users.find(u=>u.id===id))return sendJSON(res,{error:'Membro não encontrado.'},404);
-    const idx=ST.presentes.indexOf(id);idx>=0?ST.presentes.splice(idx,1):ST.presentes.push(id);
-    saveState(ST);return sendJSON(res,{ok:true,presentes:ST.presentes});
+    if(presIncludes(ST.presentes,id)){
+      presRemove(ST.presentes,id);
+    } else {
+      presAdd(ST.presentes,id);
+    }
+    saveState(ST);return sendJSON(res,{ok:true});
   }
+
+  // Exportar presença XLSX — inclui data/hora
   if(m==='GET'&&pn==='/api/presenca/exportar-xlsx'){
-    const rows=ST.users.filter(u=>ST.presentes.includes(u.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
-    const hdr=[{v:'#',bold:true,bg:'4472C4'},{v:'Nome Completo',bold:true,bg:'4472C4'},{v:'CPF',bold:true,bg:'4472C4'},{v:'Votou?',bold:true,bg:'4472C4'}];
-    const buf=buildXLSX([{name:'Presença',rows:[hdr,...rows.map((u,i)=>[i+1,u.nome,u.cpf,ST.jaVotou.includes(u.id)?'Sim':'Não'])]}]);
+    const rows=ST.presentes
+      .map(p=>{
+        const id=typeof p==='string'?p:p.id;
+        const dh=typeof p==='string'?null:p.dataHora;
+        const u=ST.users.find(x=>x.id===id);
+        return u?{nome:u.nome,cpf:u.cpf,dataHora:dh,votou:ST.jaVotou.includes(id)}:null;
+      })
+      .filter(Boolean)
+      .sort((a,b)=>a.nome.localeCompare(b.nome));
+    const hdr=[
+      {v:'#',bold:true,bg:'4472C4'},{v:'Nome Completo',bold:true,bg:'4472C4'},
+      {v:'CPF',bold:true,bg:'4472C4'},{v:'Data/Hora Check-in',bold:true,bg:'4472C4'},
+      {v:'Votou?',bold:true,bg:'4472C4'},
+    ];
+    const buf=buildXLSX([{name:'Presença',rows:[hdr,...rows.map((r,i)=>[i+1,r.nome,r.cpf,fmtDataHora(r.dataHora),r.votou?'Sim':'Não'])]}]);
     return sendXLSX(res,buf,'lista-presenca.xlsx');
   }
 
-  // Membros — exportar CSV
+  // Membros
   if(m==='GET'&&pn==='/api/usuarios/exportar'){
     const csv=toCSV(ST.users,['nome','cpf']);
     res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="membros.csv"'});
     return res.end('\uFEFF'+csv);
   }
-
-  // Membros — importar CSV (texto)
   if(m==='POST'&&pn==='/api/usuarios/importar'){
-    const body=await jsonBody(req);
-    const rows=parseCSV(typeof body==='string'?body:body.csv||'');
-    const result=importarMembros(rows);
-    saveState(ST);return sendJSON(res,{ok:true,...result});
+    const body=await jsonBody(req);const rows=parseCSV(typeof body==='string'?body:body.csv||'');
+    const result=importarMembros(rows);saveState(ST);return sendJSON(res,{ok:true,...result});
   }
-
-  // Membros — importar XLSX (multipart)
   if(m==='POST'&&pn==='/api/usuarios/importar-xlsx'){
     const ct=req.headers['content-type']||'',bm=ct.match(/boundary=([^\s;]+)/);
     if(!bm)return sendJSON(res,{error:'Content-Type inválido.'},400);
@@ -383,11 +427,8 @@ const server = http.createServer(async(req,res)=>{
     if(!file?.data)return sendJSON(res,{error:'Arquivo não enviado.'},400);
     const parsed=readXLSX(file.data);
     if(parsed.error)return sendJSON(res,{error:parsed.error},400);
-    const result=importarMembros(parsed.rows);
-    saveState(ST);return sendJSON(res,{ok:true,...result,erros:result.erros});
+    const result=importarMembros(parsed.rows);saveState(ST);return sendJSON(res,{ok:true,...result,erros:result.erros});
   }
-
-  // Membros CRUD
   if(m==='POST'&&pn==='/api/usuarios'){
     const{nome,cpf}=await jsonBody(req);
     if(!nome||!cpf)return sendJSON(res,{error:'Nome e CPF obrigatórios.'},400);
@@ -414,19 +455,20 @@ const server = http.createServer(async(req,res)=>{
   }
   if(m==='DELETE'&&pn.startsWith('/api/usuarios/')){
     const id=pn.split('/')[3];
-    ST.users=ST.users.filter(u=>u.id!==id);ST.presentes=ST.presentes.filter(x=>x!==id);
+    ST.users=ST.users.filter(u=>u.id!==id);
+    presRemove(ST.presentes,id);
     ST.jaVotou=ST.jaVotou.filter(x=>x!==id);ST.candidatos=ST.candidatos.filter(c=>c.userId!==id);
     saveState(ST);return sendJSON(res,{ok:true});
   }
 
-  // Candidatos
+  // Candidatos — sem campo desc na criação
   if(m==='POST'&&pn==='/api/candidatos'){
-    const{userId,idade,desc}=await jsonBody(req);
+    const{userId,idade}=await jsonBody(req);
     if(!userId)return sendJSON(res,{error:'userId obrigatório.'},400);
     const u=ST.users.find(x=>x.id===userId);
     if(!u)return sendJSON(res,{error:'Membro não encontrado.'},404);
     if(ST.candidatos.find(c=>c.userId===userId))return sendJSON(res,{error:'Este membro já é candidato.'},409);
-    const c={id:genId(),userId,nome:u.nome,idade:Number(idade)||0,fotoUrl:'',desc:(desc||'').trim()};
+    const c={id:genId(),userId,nome:u.nome,idade:Number(idade)||0,fotoUrl:''};
     ST.candidatos.push(c);saveState(ST);return sendJSON(res,{ok:true,candidato:c});
   }
   if(m==='PATCH'&&pn.match(/^\/api\/candidatos\/[^/]+$/)&&!pn.includes('/foto')){
@@ -434,7 +476,6 @@ const server = http.createServer(async(req,res)=>{
     if(!c)return sendJSON(res,{error:'Candidato não encontrado.'},404);
     const b=await jsonBody(req);
     if(b.idade!==undefined)c.idade=Number(b.idade);
-    if(b.desc!==undefined)c.desc=b.desc.trim();
     saveState(ST);return sendJSON(res,{ok:true,candidato:c});
   }
   if(m==='DELETE'&&pn.startsWith('/api/candidatos/')&&!pn.includes('/foto')){
@@ -464,7 +505,6 @@ const server = http.createServer(async(req,res)=>{
 
   // Eleição
   if(m==='POST'&&pn==='/api/eleicao/iniciar'){
-    // v4.2: não exige quórum mínimo para iniciar, apenas 1+ presentes, 1+ cargos, 1+ candidatos
     if(!ST.presentes.length)return sendJSON(res,{error:'Marque presença de pelo menos 1 membro.'},400);
     if(!ST.cargos.length)return sendJSON(res,{error:'Cadastre pelo menos 1 cargo.'},400);
     if(!ST.candidatos.length)return sendJSON(res,{error:'Cadastre pelo menos 1 candidato.'},400);
@@ -479,7 +519,7 @@ const server = http.createServer(async(req,res)=>{
     const ap=apurar(),sheets=[];
     sheets.push({name:'Resumo',rows:[
       [{v:APP_NAME+' v'+VERSION,bold:true,bg:'4472C4'},'',''],['','',''],
-      [{v:'Total de membros cadastrados',bold:true},ST.users.length,''],
+      [{v:'Total de membros',bold:true},ST.users.length,''],
       [{v:'Total de presentes',bold:true},ST.presentes.length,''],
       [{v:'Total de votantes',bold:true},ST.jaVotou.length,''],
       [{v:'Abstenções',bold:true},ST.presentes.length-ST.jaVotou.length,''],['','',''],
@@ -494,8 +534,15 @@ const server = http.createServer(async(req,res)=>{
       if(a.branco>0)rows.push(['—','Votos em branco / nulos',a.branco,'—','—']);
       sheets.push({name:a.cargo.nome.slice(0,31),rows:[...hdr,...rows]});
     }
-    const pr=ST.users.filter(u=>ST.presentes.includes(u.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
-    sheets.push({name:'Lista de Presença',rows:[[{v:'#',bold:true,bg:'4472C4'},{v:'Nome',bold:true,bg:'4472C4'},{v:'CPF',bold:true,bg:'4472C4'},{v:'Votou?',bold:true,bg:'4472C4'}],...pr.map((u,i)=>[i+1,u.nome,u.cpf,ST.jaVotou.includes(u.id)?'Sim':'Não'])]});
+    const pr=ST.presentes.map(p=>{
+      const id=typeof p==='string'?p:p.id,dh=typeof p==='string'?null:p.dataHora;
+      const u=ST.users.find(x=>x.id===id);
+      return u?{nome:u.nome,cpf:u.cpf,dataHora:dh,votou:ST.jaVotou.includes(id)}:null;
+    }).filter(Boolean).sort((a,b)=>a.nome.localeCompare(b.nome));
+    sheets.push({name:'Lista de Presença',rows:[
+      [{v:'#',bold:true,bg:'4472C4'},{v:'Nome',bold:true,bg:'4472C4'},{v:'CPF',bold:true,bg:'4472C4'},{v:'Data/Hora Check-in',bold:true,bg:'4472C4'},{v:'Votou?',bold:true,bg:'4472C4'}],
+      ...pr.map((u,i)=>[i+1,u.nome,u.cpf,fmtDataHora(u.dataHora),u.votou?'Sim':'Não'])
+    ]});
     return sendXLSX(res,buildXLSX(sheets),'resultado-eleicao.xlsx');
   }
 
