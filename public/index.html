@@ -462,14 +462,57 @@ function tabPresenca(){
   var quorum=totalMembros>0?Math.ceil(totalMembros/2):0;
   var quorumAtingido=totalPresentes>=quorum&&totalMembros>0;
   var pct=totalMembros>0?Math.round(totalPresentes/totalMembros*100):0;
-
   var naoVotou=S.users.filter(function(u){return S.presentes.some(function(p){return p.id===u.id;})&&!S.jaVotou.includes(u.id);});
   var alerta=S.elStatus==='ativa'&&naoVotou.length>0
     ?'<div class="warn-box" style="margin-bottom:12px"><strong>Ainda não votaram ('+naoVotou.length+'):</strong>'+naoVotou.map(function(u){return '<br>· '+esc(u.nome);}).join('')+'</div>':'';
+  var quorumBadge=quorumAtingido
+    ?'<span style="background:#eaf3de;color:#3B6D11;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">✓ Quórum mínimo atingido!</span>'
+    :'<span style="font-size:12px;color:#aaa">Quórum mínimo: '+quorum+' presentes</span>';
 
+  // O container principal é renderizado 1 vez.
+  // A lista (#pres-rows) é atualizada separadamente por pRenderRows(),
+  // evitando destruir o <input> de filtro e perder o foco.
+  return '<h3 style="font-weight:700;margin-bottom:8px">Lista de Presença</h3>'
+    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">'
+      +'<span style="font-size:12px;color:#888">'+totalPresentes+' de '+totalMembros+' presentes ('+pct+'%)</span>'
+      +' · <span style="font-size:12px;color:#888">'+S.jaVotou.length+' votaram</span>'
+      +quorumBadge
+    +'</div>'
+    +'<div class="card" style="padding:12px 14px;margin-bottom:10px">'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+        +'<div style="flex:1;min-width:160px">'
+          +'<label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:4px">Filtrar</label>'
+          // IMPORTANTE: oninput atualiza só #pres-rows, NÃO reconstrói o tab inteiro
+          +'<input id="p-filter" class="input" placeholder="🔍 Nome ou CPF..." value="'+esc(_pFiltro)+'" style="margin:0" oninput="pFiltrar(this.value)">'
+        +'</div>'
+        +'<div>'
+          +'<label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:4px">Ordenar</label>'
+          +'<select class="input" style="margin:0;width:auto" onchange="pOrdenar(this.value)">'
+            +'<option value="nome-asc"  '+(_pOrdem==='nome-asc'  ?'selected':'')+'>Nome A→Z</option>'
+            +'<option value="nome-desc" '+(_pOrdem==='nome-desc' ?'selected':'')+'>Nome Z→A</option>'
+            +'<option value="data-desc" '+(_pOrdem==='data-desc' ?'selected':'')+'>Check-in mais recente</option>'
+            +'<option value="data-asc"  '+(_pOrdem==='data-asc'  ?'selected':'')+'>Check-in mais antigo</option>'
+          +'</select>'
+        +'</div>'
+      +'</div>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'
+      +'<button class="btn btn-s btn-sm" onclick="presMarcarTodos()">✓ Marcar todos</button>'
+      +'<button class="btn btn-danger btn-sm" onclick="presDesmarcarTodos()">✗ Desmarcar todos</button>'
+      +'<button class="btn btn-p btn-sm" onclick="exportarPresenca()">📊 Exportar .xlsx</button>'
+    +'</div>'
+    +alerta
+    // Container da lista — atualizado por pRenderRows() sem recriar o input
+    +'<div id="pres-rows">'+pBuildRows()+'</div>';
+}
+
+var _pFiltro='', _pOrdem='nome-asc';
+
+// Gera HTML das linhas da lista de presença
+function pBuildRows(){
   var q=(_pFiltro||'').toLowerCase().trim();
   var lista=S.users.slice();
-  if(q) lista=lista.filter(function(u){return u.nome.toLowerCase().includes(q)||u.cpf.includes(q);});
+  if(q) lista=lista.filter(function(u){ return u.nome.toLowerCase().includes(q)||u.cpf.includes(q); });
   lista.sort(function(a,b){
     if(_pOrdem==='nome-asc')  return a.nome.localeCompare(b.nome);
     if(_pOrdem==='nome-desc') return b.nome.localeCompare(a.nome);
@@ -481,58 +524,52 @@ function tabPresenca(){
     if(_pOrdem==='data-desc') return tb-ta;
     return a.nome.localeCompare(b.nome);
   });
-
-  var rows=lista.map(function(u){
+  if(!lista.length) return '<p style="color:#aaa;font-size:13px;padding:8px 0">Nenhum membro encontrado.</p>';
+  return lista.map(function(u){
     var entry=S.presentes.find(function(p){return p.id===u.id;});
-    var p=!!entry, v=S.jaVotou.includes(u.id);
+    var presente=!!entry, votou=S.jaVotou.includes(u.id);
     var dh=entry&&entry.dataHora?fmtDH(entry.dataHora):'—';
-    var row='<div class="pres-item'+(p?' p':'')+'"';
-    if(!v) row+=' onclick="presToggle(&quot;"+u.id+"&quot;)"';
-    if(v)  row+=' style="cursor:default"';
-    row+='>';
-    row+='<div style="width:20px;height:20px;border-radius:50%;border:1.5px solid '+(p?'#3B6D11':'#bbb')+';background:'+(p?'#3B6D11':'transparent')+';display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:#fff;font-weight:700">'+(p?'✓':'')+'</div>';
+    // onclick usa data-attribute para evitar qualquer problema de aspas
+    var row='<div class="pres-item'+(presente?' p':'')+'"'
+      +' data-uid="'+u.id+'"'
+      +(votou?' style="cursor:default"':' onclick="presClickItem(this)"')
+      +'>';
+    row+='<div style="width:20px;height:20px;border-radius:50%;border:1.5px solid '+(presente?'#3B6D11':'#bbb')
+      +';background:'+(presente?'#3B6D11':'transparent')
+      +';display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:#fff;font-weight:700">'
+      +(presente?'✓':'')+'</div>';
     row+='<div style="flex:1">';
     row+='<p style="font-size:13px;font-weight:600">'+esc(u.nome)+'</p>';
     row+='<p style="font-size:11px;color:#888">'+esc(u.cpf)+'</p>';
-    if(p) row+='<p style="font-size:10px;color:#aaa;margin-top:2px">📅 '+dh+'</p>';
+    if(presente) row+='<p style="font-size:10px;color:#aaa;margin-top:2px">📅 '+dh+'</p>';
     row+='</div>';
-    if(v)  row+='<span class="badge bdg-ok">Votou</span>';
-    else if(p) row+='<span class="badge bdg-info">Presente</span>';
+    if(votou)        row+='<span class="badge bdg-ok">Votou</span>';
+    else if(presente) row+='<span class="badge bdg-info">Presente</span>';
     row+='</div>';
     return row;
   }).join('');
-
-  var quorumBadge=quorumAtingido
-    ?'<span style="background:#eaf3de;color:#3B6D11;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">✓ Quórum mínimo atingido!</span>'
-    :'<span style="font-size:12px;color:#aaa">Quórum mínimo: '+quorum+' presentes</span>';
-
-  var html='<h3 style="font-weight:700;margin-bottom:8px">Lista de Presença</h3>';
-  html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
-  html+='<span style="font-size:12px;color:#888">'+totalPresentes+' de '+totalMembros+' presentes ('+pct+'%)</span>';
-  html+=' · <span style="font-size:12px;color:#888">'+S.jaVotou.length+' votaram</span>';
-  html+=quorumBadge+'</div>';
-  html+='<div class="card" style="padding:12px 14px;margin-bottom:10px">';
-  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">';
-  html+='<div style="flex:1;min-width:160px"><label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:4px">Filtrar</label>';
-  html+='<input id="p-filter" class="input" placeholder="🔍 Nome ou CPF..." value="'+esc(_pFiltro)+'" style="margin:0" oninput="pFiltrar(this.value)"></div>';
-  html+='<div><label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:4px">Ordenar</label>';
-  html+='<select id="p-sort" class="input" style="margin:0;width:auto" onchange="pOrdenar(this.value)">';
-  html+='<option value="nome-asc"  '+(_pOrdem==='nome-asc'  ?'selected':'')+'>Nome A→Z</option>';
-  html+='<option value="nome-desc" '+(_pOrdem==='nome-desc' ?'selected':'')+'>Nome Z→A</option>';
-  html+='<option value="data-desc" '+(_pOrdem==='data-desc' ?'selected':'')+'>Check-in mais recente</option>';
-  html+='<option value="data-asc"  '+(_pOrdem==='data-asc'  ?'selected':'')+'>Check-in mais antigo</option>';
-  html+='</select></div></div></div>';
-  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
-  html+='<button class="btn btn-s btn-sm" onclick="presMarcarTodos()">✓ Marcar todos</button>';
-  html+='<button class="btn btn-danger btn-sm" onclick="presDesmarcarTodos()">✗ Desmarcar todos</button>';
-  html+='<button class="btn btn-p btn-sm" onclick="exportarPresenca()">📊 Exportar .xlsx</button>';
-  html+='</div>';
-  html+=alerta;
-  html+='<div>'+rows+'</div>';
-  return html;
 }
 
-var _pFiltro='', _pOrdem='nome-asc';
+// Lê o data-uid do elemento clicado e chama presToggle
+// Evita qualquer manipulação de aspas no onclick gerado dinamicamente
+function presClickItem(el){
+  var uid=el.getAttribute('data-uid');
+  if(uid) presToggle(uid);
+}
+
+// Filtro: atualiza só #pres-rows sem recriar o input (preserva foco)
+function pFiltrar(q){
+  _pFiltro=q;
+  var el=document.getElementById('pres-rows');
+  if(el) el.innerHTML=pBuildRows();
+}
+
+// Ordenação: atualiza só #pres-rows
+function pOrdenar(v){
+  _pOrdem=v;
+  var el=document.getElementById('pres-rows');
+  if(el) el.innerHTML=pBuildRows();
+}
 
 function fmtDH(iso){
   if(!iso)return '—';
@@ -541,8 +578,6 @@ function fmtDH(iso){
     return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   }catch(e){return '—';}
 }
-function pFiltrar(q){ _pFiltro=q; var el=$('tab-content'); if(el)el.innerHTML=tabPresenca(); }
-function pOrdenar(v){ _pOrdem=v;  var el=$('tab-content'); if(el)el.innerHTML=tabPresenca(); }
 
 
 async function presToggle(id)       { await api.post('/api/presenca/'+id,{});await renderTab(); }
