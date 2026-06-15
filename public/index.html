@@ -106,12 +106,12 @@ async function downloadFile(url, filename){
     toast('Download: '+filename,'success');
   }catch(e){ console.error(e); toast('Erro ao baixar arquivo.','danger'); }
 }
-function exportarCSV()       { downloadFile('/api/usuarios/exportar','eleitores.csv'); }
+function exportarCSV()       { downloadFile('/api/usuarios/exportar','membros.xlsx'); }
 function exportarPresenca()  { downloadFile('/api/presenca/exportar-xlsx','lista-presenca.xlsx'); }
 function exportarResultado() { downloadFile('/api/resultados/exportar-xlsx','resultado-eleicao.xlsx'); }
 
 // ─── Estado UI ────────────────────────────────────────────────────────────────
-let S = { tab:'usuarios', users:[], candidatos:[], cargos:[], presentes:[], jaVotou:[], elStatus:'aguardando', config:{} };
+let S = { tab:'usuarios', users:[], candidatos:[], cargos:[], presentes:[], elStatus:'aguardando', cargoAtivo:null, cargosEncerrados:[], cargosVotados:{}, resultados:{}, config:{} };
 let _pollTimer = null;
 
 // ─── Utilitários ─────────────────────────────────────────────────────────────
@@ -159,7 +159,7 @@ function avHTML(c,sz){
 async function loadState(){
   const d=await api.get('/api/state');
   S.users=d.users||[];S.candidatos=d.candidatos||[];S.cargos=d.cargos||[];
-  S.presentes=d.presentes||[];S.jaVotou=d.jaVotou||[];S.elStatus=d.elStatus||'aguardando';S.config=d.config||{};
+  S.presentes=d.presentes||[];S.elStatus=d.elStatus||'aguardando';S.cargoAtivo=d.cargoAtivo||null;S.cargosEncerrados=d.cargosEncerrados||[];S.cargosVotados=d.cargosVotados||{};S.resultados=d.resultados||{};S.config=d.config||{};
   applyTheme(S.config);
 }
 
@@ -178,7 +178,8 @@ async function loadState(){
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
 function renderLogin(){
   const c=S.config;
-  const sb=S.elStatus==='ativa'?'<span class="badge bdg-ok">Eleição em andamento</span>':S.elStatus==='encerrada'?'<span class="badge bdg-warn">Eleição encerrada</span>':'<span class="badge bdg-gray">Aguardando</span>';
+  const cargoAtivoNome=S.cargoAtivo?(S.cargos.find(g=>g.id===S.cargoAtivo)||{}).nome:'';
+  const sb=S.elStatus==='ativa'&&S.cargoAtivo?'<span class="badge bdg-ok">Votando: '+esc(cargoAtivoNome||'')+'</span>':S.cargosEncerrados.length?'<span class="badge bdg-warn">'+S.cargosEncerrados.length+' cargo(s) encerrado(s)</span>':'<span class="badge bdg-gray">Aguardando</span>';
   $('app').innerHTML=`
   <div class="page"><div class="wrap">
     <div style="text-align:center;margin-bottom:22px">
@@ -274,7 +275,7 @@ function tabUsuarios(){
     <div class="grid2" style="gap:10px">
       <div class="field" style="margin:0"><label>Nome completo</label><input id="u-nome" class="input" placeholder="Nome completo"></div>
       <div class="field" style="margin:0">
-        <label>CPF <span id="u-cpf-st" style="font-weight:400;color:#aaa;font-size:11px"></span></label>
+        <label>CPF <span style="font-weight:400;color:#aaa;font-size:10px">(opcional — pode ser adicionado no check-in)</span> <span id="u-cpf-st" style="font-weight:400;font-size:11px"></span></label>
         <input id="u-cpf" class="input" placeholder="000.000.000-00" maxlength="14">
       </div>
     </div>
@@ -291,7 +292,7 @@ function tabUsuarios(){
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <label class="btn btn-p" style="cursor:pointer">📂 CSV<input type="file" accept=".csv,.txt" style="display:none" onchange="importCSV(this)"></label>
       <label class="btn btn-p" style="cursor:pointer">📊 XLSX<input type="file" accept=".xlsx,.xls" style="display:none" onchange="importXLSX(this)"></label>
-      <button class="btn" onclick="exportarCSV()">📤 Exportar CSV</button>
+      <button class="btn" onclick="exportarCSV()">📊 Exportar XLSX</button>
     </div>
     <div id="import-msg" style="display:none;margin-top:10px"></div>
   </div>
@@ -364,7 +365,7 @@ function uRenderList(){
       <div style="width:32px;height:32px;border-radius:50%;background:var(--pbg);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:var(--p);flex-shrink:0">${esc(u.nome[0])}</div>
       <div style="flex:1;min-width:0">
         <p style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.nome)}</p>
-        <p style="font-size:11px;color:#888">${esc(u.cpf)}</p>
+        <p style="font-size:11px;color:#888">${u.cpf?esc(u.cpf):'<span style="color:#854F0B;font-style:italic">Sem CPF — será registrado no check-in</span>'}</p>
       </div>
       <button class="btn btn-p btn-sm" onclick="editUser('${u.id}')">✏️</button>
       <button class="btn btn-danger btn-sm" onclick="delUser('${u.id}')">×</button>
@@ -401,8 +402,8 @@ async function uDelSel(){
 async function addUser(){
   const nome=($('u-nome').value||'').trim(),cpf=($('u-cpf').value||'').trim();
   const e=$('u-err');e.style.display='none';
-  if(!nome||!cpf){e.textContent='Nome e CPF obrigatórios.';e.style.display='block';return;}
-  if(!validCPF(cpf)){e.textContent='CPF inválido. Verifique os dígitos.';e.style.display='block';return;}
+  if(!nome){e.textContent='Nome obrigatório.';e.style.display='block';return;}
+  if(cpf&&!validCPF(cpf)){e.textContent='CPF inválido. Verifique os dígitos.';e.style.display='block';return;}
   const res=await api.post('/api/usuarios',{nome,cpf});
   if(res.error){e.textContent=res.error;e.style.display='block';return;}
   toast('Membro adicionado!','success');await renderTab();
@@ -462,8 +463,9 @@ function tabPresenca(){
   var quorum=totalMembros>0?Math.ceil(totalMembros/2):0;
   var quorumAtingido=totalPresentes>=quorum&&totalMembros>0;
   var pct=totalMembros>0?Math.round(totalPresentes/totalMembros*100):0;
-  var naoVotou=S.users.filter(function(u){return S.presentes.some(function(p){return p.id===u.id;})&&!S.jaVotou.includes(u.id);});
-  var alerta=S.elStatus==='ativa'&&naoVotou.length>0
+  var votadosCargo=(S.cargoAtivo&&S.cargosVotados[S.cargoAtivo])?S.cargosVotados[S.cargoAtivo]:[];
+  var naoVotou=S.users.filter(function(u){return S.presentes.some(function(p){return p.id===u.id;})&&!votadosCargo.includes(u.id);});
+  var alerta=S.elStatus==='ativa'&&S.cargoAtivo&&naoVotou.length>0
     ?'<div class="warn-box" style="margin-bottom:12px"><strong>Ainda não votaram ('+naoVotou.length+'):</strong>'+naoVotou.map(function(u){return '<br>· '+esc(u.nome);}).join('')+'</div>':'';
   var quorumBadge=quorumAtingido
     ?'<span style="background:#eaf3de;color:#3B6D11;font-size:12px;font-weight:700;padding:3px 10px;border-radius:6px">✓ Quórum mínimo atingido!</span>'
@@ -475,7 +477,7 @@ function tabPresenca(){
   return '<h3 style="font-weight:700;margin-bottom:8px">Lista de Presença</h3>'
     +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">'
       +'<span style="font-size:12px;color:#888">'+totalPresentes+' de '+totalMembros+' presentes ('+pct+'%)</span>'
-      +' · <span style="font-size:12px;color:#888">'+S.jaVotou.length+' votaram</span>'
+      +(S.cargoAtivo?' · <span style="font-size:12px;color:#888">'+votadosCargo.length+' votaram neste cargo</span>':'')
       +quorumBadge
     +'</div>'
     +'<div class="card" style="padding:12px 14px;margin-bottom:10px">'
@@ -510,6 +512,7 @@ var _pFiltro='', _pOrdem='nome-asc';
 
 // Gera HTML das linhas da lista de presença
 function pBuildRows(){
+  var votadosC=(S.cargoAtivo&&S.cargosVotados[S.cargoAtivo])?S.cargosVotados[S.cargoAtivo]:[];
   var q=(_pFiltro||'').toLowerCase().trim();
   var lista=S.users.slice();
   if(q) lista=lista.filter(function(u){ return u.nome.toLowerCase().includes(q)||u.cpf.includes(q); });
@@ -527,7 +530,7 @@ function pBuildRows(){
   if(!lista.length) return '<p style="color:#aaa;font-size:13px;padding:8px 0">Nenhum membro encontrado.</p>';
   return lista.map(function(u){
     var entry=S.presentes.find(function(p){return p.id===u.id;});
-    var presente=!!entry, votou=S.jaVotou.includes(u.id);
+    var presente=!!entry, votou=votadosC.includes(u.id);
     var dh=entry&&entry.dataHora?fmtDH(entry.dataHora):'—';
     // onclick usa data-attribute para evitar qualquer problema de aspas
     var row='<div class="pres-item'+(presente?' p':'')+'"'
@@ -588,54 +591,92 @@ async function presDesmarcarTodos() { await api.post('/api/presenca/desmarcar-to
 var _fotoCandFile=null;
 
 function tabCandidatos(){
-  const candIds=S.candidatos.map(c=>c.userId);
-  const disp=S.users.filter(u=>!candIds.includes(u.id));
-  const selHtml=disp.length>0
-    ?'<div class="field"><label>Selecionar membro</label>'
+  var candIds=S.candidatos.map(function(c){return c.userId;});
+  var disp=S.users.filter(function(u){return candIds.indexOf(u.id)<0;});
+
+  // Selector de membro
+  var selMembro=disp.length>0
+    ?'<div class="field"><label>Membro</label>'
       +'<select id="c-userid" class="input">'
         +'<option value="">-- Escolha um membro --</option>'
-        +disp.map(u=>'<option value="'+esc(u.id)+'">'+esc(u.nome)+' — CPF: '+esc(u.cpf)+'</option>').join('')
+        +disp.map(function(u){return '<option value="'+esc(u.id)+'">'+esc(u.nome)+(u.cpf?' — '+esc(u.cpf):'')+'</option>';}).join('')
       +'</select></div>'
     :'<div class="warn-box">Todos os membros já são candidatos ou não há membros cadastrados.</div>';
 
-  const list=S.candidatos.map(c=>
-    '<div class="card-sm" style="display:flex;align-items:center;gap:12px;margin-bottom:8px">'
-      +(c.fotoUrl
-        ?'<img src="'+esc(c.fotoUrl)+'" style="width:48px;height:48px;border-radius:50%;object-fit:cover;border:1px solid #ddd;flex-shrink:0">'
-        :'<div style="width:48px;height:48px;border-radius:50%;background:#faeeda;display:flex;align-items:center;justify-content:center;font-size:11px;color:#854F0B;text-align:center;flex-shrink:0;line-height:1.2;padding:4px;font-weight:600">Sem<br>foto</div>')
-      +'<div style="flex:1">'
-        +'<p style="font-weight:600;font-size:13px">'+esc(c.nome)+'</p>'
-        +'<p style="font-size:11px;color:#888">'+c.idade+' anos</p>'
-        +(!c.fotoUrl?'<p style="font-size:10px;color:#a32d2d;font-weight:600;margin-top:2px">⚠ Foto obrigatória</p>':'')
-      +'</div>'
-      +'<label class="btn '+(c.fotoUrl?'btn-p':'btn-danger')+' btn-sm" style="cursor:pointer">'
-        +(c.fotoUrl?'📷 Trocar':'📷 Adicionar foto')
-        +'<input type="file" accept="image/*" style="display:none" onchange="uploadFoto(&quot;"+c.id+"&quot;,this)">'
-      +'</label>'
-      +'<button class="btn btn-danger btn-sm" onclick="delCand(&quot;"+c.id+"&quot;)">×</button>'
-    +'</div>'
-  ).join('');
+  // Selector de cargo (sincronizado com S.cargos)
+  var selCargo=S.cargos.length>0
+    ?'<div class="field"><label>Cargo que irá concorrer</label>'
+      +'<select id="c-cargo" class="input">'
+        +'<option value="">-- Escolha o cargo --</option>'
+        +S.cargos.map(function(g){return '<option value="'+esc(g.id)+'">'+esc(g.nome)+' ('+g.vagas+' vaga'+(g.vagas>1?'s':'')+')</option>';}).join('')
+      +'</select></div>'
+    :'<div class="warn-box" style="margin-top:8px">⚠ Cadastre cargos primeiro na aba <strong>Cargos</strong>.</div>';
 
-  return '<h3 style="font-weight:700;margin-bottom:14px">Candidatos ('+S.candidatos.length+')</h3>'
-    +(S.candidatos.some(c=>!c.fotoUrl)?'<div class="warn-box" style="margin-bottom:12px">⚠ Candidatos sem foto não aparecerão corretamente nas cédulas. Adicione a foto de cada um.</div>':'')
-    +'<div class="card" style="margin-bottom:14px">'
-      +selHtml
-      +'<div class="field" style="margin-top:10px">'
-        +'<label>Idade</label>'
-        +'<input id="c-idade" class="input" type="number" min="1" placeholder="Idade" style="max-width:120px">'
-      +'</div>'
-      +'<div class="field">'
-        +'<label>Foto <span style="color:#a32d2d">*</span> obrigatória</label>'
-        +'<label class="btn btn-p btn-sm" style="cursor:pointer;width:fit-content;margin-top:2px">'
-          +'📷 Escolher foto'
-          +'<input type="file" id="c-foto-in" accept="image/*" style="display:none" onchange="prevFoto(this)">'
-        +'</label>'
-        +'<div id="c-foto-prev" style="margin-top:6px"></div>'
-      +'</div>'
-      +'<button class="btn btn-p" onclick="addCand()">+ Adicionar candidato</button>'
-    +'</div>'
-    +'<div>'+list+'</div>';
+  // Agrupa candidatos por cargo
+  var html='<h3 style="font-weight:700;margin-bottom:14px">Candidatos ('+S.candidatos.length+')</h3>';
+  if(S.candidatos.some(function(c){return !c.fotoUrl;}))
+    html+='<div class="warn-box" style="margin-bottom:12px">⚠ Candidatos sem foto não aparecerão corretamente nas cédulas. Adicione a foto de cada um.</div>';
+
+  // Formulário de adição
+  html+='<div class="card" style="margin-bottom:14px">'
+    +selMembro
+    +selCargo
+    +'<div class="field"><label>Idade</label>'
+      +'<input id="c-idade" class="input" type="number" min="1" placeholder="Idade" style="max-width:120px"></div>'
+    +'<div class="field"><label>Foto <span style="color:#a32d2d">*</span> obrigatória</label>'
+      +'<label class="btn btn-p btn-sm" style="cursor:pointer;width:fit-content;margin-top:2px">📷 Escolher foto'
+        +'<input type="file" id="c-foto-in" accept="image/*" style="display:none" onchange="prevFoto(this)"></label>'
+      +'<div id="c-foto-prev" style="margin-top:6px"></div></div>'
+    +'<button class="btn btn-p" onclick="addCand()">+ Adicionar candidato</button>'
+    +'</div>';
+
+  // Lista agrupada por cargo
+  if(S.candidatos.length===0){
+    html+='<p style="color:#aaa;font-size:13px;text-align:center;padding:20px">Nenhum candidato cadastrado ainda.</p>';
+  } else {
+    S.cargos.forEach(function(g){
+      var cands=S.candidatos.filter(function(c){return c.cargoId===g.id;});
+      if(cands.length===0)return;
+      html+='<div style="margin-bottom:18px">'
+        +'<p style="font-size:13px;font-weight:700;color:var(--p);margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid var(--pbg)">'
+        +'🏛️ '+esc(g.nome)+' <span style="font-size:11px;color:#aaa;font-weight:400">— '+cands.length+' candidato'+(cands.length>1?'s':'')+' / '+g.vagas+' vaga'+(g.vagas>1?'s':'')+'</span></p>';
+      html+=cands.map(function(c){return candidatoCard(c);}).join('');
+      html+='</div>';
+    });
+    // Candidatos sem cargo válido (órfãos)
+    var orfaos=S.candidatos.filter(function(c){return !S.cargos.find(function(g){return g.id===c.cargoId;});});
+    if(orfaos.length>0){
+      html+='<div style="margin-bottom:18px">'
+        +'<p style="font-size:13px;font-weight:700;color:#a32d2d;margin-bottom:8px">⚠ Sem cargo (cargo removido)</p>';
+      html+=orfaos.map(function(c){return candidatoCard(c);}).join('');
+      html+='</div>';
+    }
+  }
+  return html;
 }
+
+// Card individual de candidato — botões usam data-cid (sem problema de aspas)
+function candidatoCard(c){
+  var foto=c.fotoUrl
+    ?'<img src="'+esc(c.fotoUrl)+'" style="width:48px;height:48px;border-radius:50%;object-fit:cover;border:1px solid #ddd;flex-shrink:0">'
+    :'<div style="width:48px;height:48px;border-radius:50%;background:#faeeda;display:flex;align-items:center;justify-content:center;font-size:11px;color:#854F0B;text-align:center;flex-shrink:0;line-height:1.2;padding:4px;font-weight:600">Sem<br>foto</div>';
+  return '<div class="card-sm" style="display:flex;align-items:center;gap:12px;margin-bottom:8px">'
+    +foto
+    +'<div style="flex:1">'
+      +'<p style="font-weight:600;font-size:13px">'+esc(c.nome)+'</p>'
+      +'<p style="font-size:11px;color:#888">'+c.idade+' anos</p>'
+      +(!c.fotoUrl?'<p style="font-size:10px;color:#a32d2d;font-weight:600;margin-top:2px">⚠ Foto obrigatória</p>':'')
+    +'</div>'
+    +'<label class="btn '+(c.fotoUrl?'btn-p':'btn-danger')+' btn-sm" style="cursor:pointer">'
+      +(c.fotoUrl?'📷 Trocar':'📷 Foto')
+      +'<input type="file" accept="image/*" style="display:none" data-cid="'+c.id+'" onchange="uploadFotoEl(this)"></label>'
+    +'<button class="btn btn-danger btn-sm" data-cid="'+c.id+'" onclick="delCandEl(this)">×</button>'
+    +'</div>';
+}
+
+// Handlers que leem data-cid (corrige bug do botão excluir)
+function delCandEl(el){ var id=el.getAttribute('data-cid'); if(id) delCand(id); }
+function uploadFotoEl(el){ var id=el.getAttribute('data-cid'); if(id) uploadFoto(id, el); }
 
 
 function prevFoto(input){
@@ -646,25 +687,38 @@ function prevFoto(input){
   r.readAsDataURL(file);
 }
 async function addCand(){
-  const userId=($('c-userid')?$('c-userid').value:''),idade=($('c-idade').value||'').trim();
-  if(!userId)     {toast('Selecione um membro.','warn');return;}
-  if(!idade)      {toast('Informe a idade.','warn');return;}
+  const userId=($('c-userid')?$('c-userid').value:'');
+  const cargoId=($('c-cargo')?$('c-cargo').value:'');
+  const idade=($('c-idade').value||'').trim();
+  if(!userId)      {toast('Selecione um membro.','warn');return;}
+  if(!cargoId)     {toast('Selecione o cargo que o candidato irá concorrer.','warn');return;}
+  if(!idade)       {toast('Informe a idade.','warn');return;}
   if(!_fotoCandFile){toast('A foto é obrigatória.','warn');return;}
-  const res=await api.post('/api/candidatos',{userId,idade});
+  const res=await api.post('/api/candidatos',{userId,idade,cargoId});
   if(res.error){toast(res.error,'danger');return;}
-  const fr=await api.upload('/api/candidatos/'+res.candidato.id+'/foto','foto',_fotoCandFile);
-  if(fr.error)toast('Candidato criado, mas erro na foto: '+fr.error,'warn');
+  // Upload da foto
+  if(res.candidato&&res.candidato.id){
+    await api.upload('/api/candidatos/'+res.candidato.id+'/foto','foto',_fotoCandFile);
+  }
   _fotoCandFile=null;
-  toast('Candidato adicionado!','success');await renderTab();
+  toast('Candidato adicionado!','success');
+  await loadState();await renderTab();
 }
 async function uploadFoto(id,input){
   const file=input.files[0];if(!file)return;
   toast('Enviando foto...','info');
   const r=await api.upload('/api/candidatos/'+id+'/foto','foto',file);
   if(r.error){toast('Erro: '+r.error,'danger');return;}
-  toast('Foto atualizada!','success');await renderTab();
+  toast('Foto atualizada!','success');await loadState();await renderTab();
 }
-async function delCand(id){if(!confirm('Remover candidato?'))return;await api.del('/api/candidatos/'+id);toast('Membro removido.','warn');await renderTab();}
+async function delCand(id){
+  if(!confirm('Remover este candidato?'))return;
+  const r=await api.del('/api/candidatos/'+id);
+  if(r&&r.error){toast(r.error,'danger');return;}
+  toast('Candidato removido.','warn');
+  await loadState();await renderTab();
+}
+
 
 // ─── TAB: CARGOS ──────────────────────────────────────────────────────────────
 function tabCargos(){
@@ -690,87 +744,204 @@ async function delCargo(id){if(!confirm('Remover?'))return;await api.del('/api/c
 
 // ─── TAB: ELEIÇÃO ─────────────────────────────────────────────────────────────
 function tabEleicao(){
-  const st=S.elStatus;
-  const quorum=S.users.length>0?Math.ceil(S.users.length/2):0;
-  const quorumOk=S.presentes.length>=quorum&&S.users.length>0;
-  const stats='<div class="grid2" style="margin-bottom:8px">'+[['👥','Membros',S.users.length],['🙋','Presentes',S.presentes.length],['✅','Votaram',S.jaVotou.length],['🏛️','Cargos',S.cargos.length]].map(function(x){return '<div class="stat-card"><div class="lbl">'+x[0]+' '+x[1]+'</div><div class="val">'+x[2]+'</div></div>';}).join('')+'</div>'
+  var quorum=S.users.length>0?Math.ceil(S.users.length/2):0;
+  var quorumOk=S.presentes.length>=quorum&&S.users.length>0;
+  var stats='<div class="grid2" style="margin-bottom:8px">'
+    +[['👥','Membros',S.users.length],['🙋','Presentes',S.presentes.length],['🏛️','Cargos',S.cargos.length],['👤','Candidatos',S.candidatos.length]]
+      .map(function(x){return '<div class="stat-card"><div class="lbl">'+x[0]+' '+x[1]+'</div><div class="val">'+x[2]+'</div></div>';}).join('')
+    +'</div>'
     +(quorumOk
-      ?'<div style="background:#eaf3de;color:#3B6D11;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;margin-bottom:14px">✓ Quórum atingido! ('+S.presentes.length+'/'+quorum+' necessários)</div>'
+      ?'<div style="background:#eaf3de;color:#3B6D11;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;margin-bottom:14px">✓ Quórum atingido! ('+S.presentes.length+'/'+quorum+')</div>'
       :'<div style="background:#f8f8f6;color:#888;border-radius:8px;padding:8px 14px;font-size:12px;margin-bottom:14px">Quórum mínimo: '+quorum+' presentes (50% dos '+S.users.length+' membros)</div>');
-  let badge='',msg='',btn='';
-  if(st==='aguardando'){badge='<span class="badge bdg-gray">Aguardando</span>';msg='<p style="font-size:12px;color:#888;margin-bottom:12px">Marque presença, cadastre cargos e candidatos antes de iniciar.</p>';btn='<button class="btn btn-s btn-full" onclick="elIniciar()">▶ Iniciar Eleição</button>';}
-  else if(st==='ativa'){badge='<span class="badge bdg-ok">Em andamento</span>';msg=`<p style="font-size:12px;color:#888;margin-bottom:12px">${S.presentes.length-S.jaVotou.length} eleitor(es) ainda não votou.</p>`;btn='<button class="btn btn-danger btn-full" onclick="elEncerrar()">⏹ Encerrar Eleição</button>';}
-  else{badge='<span class="badge bdg-warn">Encerrada</span>';msg='<p style="font-size:12px;color:#888;margin-bottom:12px">Veja os resultados na aba Resultados.</p>';btn='<button class="btn btn-warn btn-full" onclick="elReiniciar()">🔄 Reiniciar (apaga todos os votos)</button>';}
-  const naoVotou=S.users.filter(u=>S.presentes.some(p=>p.id===u.id)&&!S.jaVotou.includes(u.id));
-  const nvHtml=st==='ativa'?`
-    <div class="card" style="margin-top:14px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <p style="font-size:13px;font-weight:700">⏳ Aguardando (${naoVotou.length})</p>
-        <span style="font-size:11px;color:#aaa">atualiza a cada 2s</span>
-      </div>
-      ${naoVotou.length===0
+
+  var html='<h3 style="font-weight:700;margin-bottom:14px">Controle da Eleição por Cargo</h3>'+stats;
+
+  // Card do cargo ativo (se houver)
+  if(S.elStatus==='ativa'&&S.cargoAtivo){
+    var cargoAtivo=S.cargos.find(function(g){return g.id===S.cargoAtivo;});
+    var votados=(S.cargosVotados[S.cargoAtivo]||[]).length;
+    var faltam=S.presentes.length-votados;
+    html+='<div class="card" style="border:2px solid var(--s);margin-bottom:14px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
+        +'<span class="badge bdg-ok">● Em votação</span>'
+        +'<span style="font-weight:700;font-size:15px">'+esc(cargoAtivo?cargoAtivo.nome:'')+'</span>'
+      +'</div>'
+      +'<p style="font-size:13px;color:#666;margin-bottom:12px">'+votados+' voto(s) registrado(s) · '+faltam+' presente(s) ainda não votou neste cargo.</p>'
+      +'<button class="btn btn-danger btn-full" onclick="elEncerrar()">⏹ Encerrar votação de '+esc(cargoAtivo?cargoAtivo.nome:'')+'</button>'
+      +'</div>';
+  } else {
+    // Selector para iniciar votação de um cargo
+    var cargosDisp=S.cargos.filter(function(g){
+      var temCand=S.candidatos.some(function(c){return c.cargoId===g.id;});
+      var encerrado=S.cargosEncerrados.indexOf(g.id)>=0;
+      return temCand&&!encerrado;
+    });
+    html+='<div class="card" style="margin-bottom:14px">'
+      +'<p style="font-size:13px;font-weight:700;margin-bottom:10px">▶ Iniciar votação de um cargo</p>';
+    if(!S.presentes.length){
+      html+='<div class="warn-box">Marque a presença de pelo menos 1 membro antes de iniciar.</div>';
+    } else if(cargosDisp.length===0){
+      html+='<div class="warn-box">Nenhum cargo disponível para votação. Verifique se há candidatos cadastrados e cargos ainda não encerrados.</div>';
+    } else {
+      html+='<div class="field"><label>Selecione o cargo</label>'
+        +'<select id="el-cargo" class="input">'
+          +cargosDisp.map(function(g){
+            var n=S.candidatos.filter(function(c){return c.cargoId===g.id;}).length;
+            return '<option value="'+esc(g.id)+'">'+esc(g.nome)+' ('+n+' candidato'+(n>1?'s':'')+')</option>';
+          }).join('')
+        +'</select></div>'
+        +'<button class="btn btn-s btn-full" onclick="elIniciar()">▶ Iniciar votação</button>';
+    }
+    html+='</div>';
+  }
+
+  // Situação de cada cargo
+  html+='<div class="card" style="margin-bottom:14px"><p style="font-size:13px;font-weight:700;margin-bottom:10px">📋 Situação dos cargos</p>';
+  if(S.cargos.length===0){
+    html+='<p style="font-size:12px;color:#aaa">Nenhum cargo cadastrado.</p>';
+  } else {
+    html+=S.cargos.map(function(g){
+      var nCand=S.candidatos.filter(function(c){return c.cargoId===g.id;}).length;
+      var encerrado=S.cargosEncerrados.indexOf(g.id)>=0;
+      var ativo=S.cargoAtivo===g.id;
+      var nVotos=(S.cargosVotados[g.id]||[]).length;
+      var status,cor;
+      if(ativo){status='● Em votação';cor='#3B6D11';}
+      else if(encerrado){status='✓ Encerrado ('+nVotos+' votos)';cor='#854F0B';}
+      else if(nCand===0){status='Sem candidatos';cor='#aaa';}
+      else{status='Aguardando';cor='#888';}
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f4ef">'
+        +'<div><span style="font-size:13px;font-weight:600">'+esc(g.nome)+'</span>'
+        +'<span style="font-size:11px;color:#aaa"> · '+nCand+' cand. · '+g.vagas+' vaga(s)</span></div>'
+        +'<div style="display:flex;align-items:center;gap:8px">'
+        +'<span style="font-size:12px;font-weight:600;color:'+cor+'">'+status+'</span>'
+        +(encerrado?'<button class="btn btn-warn btn-sm" data-gid="'+g.id+'" onclick="elReiniciarCargoEl(this)" title="Refazer votação">🔄</button>':'')
+        +'</div>'
+        +'</div>';
+    }).join('');
+  }
+  html+='</div>';
+
+  // Lista de quem aguarda (durante votação ativa)
+  if(S.elStatus==='ativa'&&S.cargoAtivo){
+    var votadosC=S.cargosVotados[S.cargoAtivo]||[];
+    var naoVotou=S.users.filter(function(u){return S.presentes.some(function(p){return p.id===u.id;})&&votadosC.indexOf(u.id)<0;});
+    html+='<div class="card" style="margin-bottom:14px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+        +'<p style="font-size:13px;font-weight:700">⏳ Aguardando ('+naoVotou.length+')</p>'
+        +'<span style="font-size:11px;color:#aaa">atualiza a cada 2s</span></div>'
+      +(naoVotou.length===0
         ?'<p style="text-align:center;color:#3B6D11;font-weight:700;font-size:15px;padding:10px">🎉 Todos votaram!</p>'
-        :naoVotou.map(u=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f5f4ef"><div style="width:8px;height:8px;border-radius:50%;background:#fbbf24;flex-shrink:0"></div><p style="font-size:13px">${esc(u.nome)}</p></div>`).join('')}
-    </div>`:''
-  return`
-  <h3 style="font-weight:700;margin-bottom:14px">Controle da Eleição</h3>
-  ${stats}
-  <div class="card"><div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><span style="font-weight:600">Status:</span>${badge}</div>${msg}${btn}</div>
-  ${nvHtml}
-  <div class="card" style="margin-top:14px;background:var(--bg,#f0ede6)">
-    <p style="font-size:13px;font-weight:600;margin-bottom:6px">📺 Datashow</p>
-    <a class="btn btn-p" href="/datashow" target="_blank">Abrir datashow ↗</a>
-  </div>`;
+        :naoVotou.map(function(u){return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f5f4ef"><div style="width:8px;height:8px;border-radius:50%;background:#fbbf24;flex-shrink:0"></div><p style="font-size:13px">'+esc(u.nome)+'</p></div>';}).join(''))
+      +'</div>';
+  }
+
+  // Datashow + reiniciar tudo
+  html+='<div class="card" style="margin-bottom:14px;background:var(--bg,#f0ede6)">'
+    +'<p style="font-size:13px;font-weight:600;margin-bottom:6px">📺 Datashow</p>'
+    +'<a class="btn btn-p" href="/datashow" target="_blank">Abrir datashow ↗</a></div>';
+  if(S.cargosEncerrados.length>0||S.cargoAtivo){
+    html+='<div class="card"><p style="font-size:12px;color:#888;margin-bottom:8px">Reiniciar apaga TODOS os votos de TODOS os cargos.</p>'
+      +'<button class="btn btn-warn btn-full" onclick="elReiniciar()">🔄 Reiniciar eleição completa</button></div>';
+  }
+  return html;
 }
-async function elIniciar() {const r=await api.post('/api/eleicao/iniciar',{});if(r.error){toast(r.error,'danger');return;}toast('Eleição iniciada!','success');await loadState();await renderTab();startPoll();}
-async function elEncerrar(){if(!confirm('Encerrar a eleição?'))return;await api.post('/api/eleicao/encerrar',{});toast('Encerrada.','info');stopPoll();await loadState();await renderTab();}
-async function elReiniciar(){if(!confirm('Reiniciar apaga TODOS os votos. Confirmar?'))return;await api.post('/api/eleicao/reiniciar',{});toast('Reiniciado.','warn');await loadState();await renderTab();}
+
+async function elIniciar(){
+  var cargoId=($('el-cargo')?$('el-cargo').value:'');
+  if(!cargoId){toast('Selecione um cargo.','warn');return;}
+  const r=await api.post('/api/eleicao/iniciar',{cargoId:cargoId});
+  if(r.error){toast(r.error,'danger');return;}
+  toast('Votação de '+(r.cargo||'cargo')+' iniciada!','success');
+  await loadState();await renderTab();startPoll();
+}
+async function elEncerrar(){
+  if(!confirm('Encerrar a votação deste cargo? O resultado será armazenado.'))return;
+  const r=await api.post('/api/eleicao/encerrar',{});
+  if(r.error){toast(r.error,'danger');return;}
+  toast('Votação encerrada. Resultado armazenado.','info');
+  stopPoll();await loadState();await renderTab();
+}
+function elReiniciarCargoEl(el){ var gid=el.getAttribute('data-gid'); if(gid) elReiniciarCargo(gid); }
+async function elReiniciarCargo(cargoId){
+  if(!confirm('Refazer a votação deste cargo? Os votos atuais dele serão apagados.'))return;
+  const r=await api.post('/api/eleicao/reiniciar-cargo',{cargoId:cargoId});
+  if(r.error){toast(r.error,'danger');return;}
+  toast('Cargo reaberto para nova votação.','warn');
+  await loadState();await renderTab();
+}
+async function elReiniciar(){
+  if(!confirm('Reiniciar apaga TODOS os votos de TODOS os cargos. Confirmar?'))return;
+  const r=await api.post('/api/eleicao/reiniciar',{});
+  if(r.error){toast(r.error,'danger');return;}
+  toast('Eleição reiniciada.','warn');
+  stopPoll();await loadState();await renderTab();
+}
 function startPoll(){stopPoll();_pollTimer=setInterval(async()=>{if(S.tab==='eleicao'&&S.elStatus==='ativa'){await loadState();const el=$('tab-content');if(el)el.innerHTML=tabEleicao();}},2000);}
 function stopPoll(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}}
 
 // ─── TAB: RESULTADOS ──────────────────────────────────────────────────────────
 async function tabResultados(){
-  if(S.elStatus!=='encerrada')return`<div style="text-align:center;padding:48px"><div style="font-size:48px">🔒</div><p style="color:#888;margin-top:12px">Disponível após o encerramento.</p></div>`;
+  if(!S.cargosEncerrados||S.cargosEncerrados.length===0)
+    return '<div style="text-align:center;padding:48px"><div style="font-size:48px">🔒</div><p style="color:#888;margin-top:12px">Disponível após o encerramento da votação de pelo menos um cargo.</p></div>';
   const data=await api.get('/api/resultados');
-  if(!data?.cargos)return'<p style="color:#888">Sem dados.</p>';
-  const{resultados,cargos,candidatos,totalPresentes}=data;
-  const html=cargos.map(cargo=>{
-    const res=resultados[cargo.id]||{},branco=res.branco||0;
-    const maioria=Math.ceil(totalPresentes/2);
-    const rank=Object.entries(res).filter(([k])=>k!=='branco').map(([cid,v])=>{const c=candidatos.find(x=>x.id===cid);return c?{cid,c,v}:null;}).filter(Boolean).sort((a,b)=>b.v-a.v);
-    const eleitos=rank.filter((r,i)=>i<cargo.vagas&&r.v>=maioria);
-    return`<div class="card" style="margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-        <div><h3 style="font-weight:700;font-size:16px">${esc(cargo.nome)}</h3>
-        <p style="font-size:11px;color:#888">${cargo.vagas} vaga${cargo.vagas>1?'s':''} · Maioria: ${maioria} votos (50% dos ${totalPresentes} presentes)</p></div>
-        <span class="badge ${eleitos.length>0?'bdg-ok':'bdg-err'}">${eleitos.length} eleito${eleitos.length!==1?'s':''}</span>
-      </div><div class="divider"></div>
-      ${rank.map((r,i)=>{
-        const pct=totalPresentes>0?Math.round(r.v/totalPresentes*100):0,el=eleitos.some(e=>e.cid===r.cid);
-        return`<div style="margin-bottom:12px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:11px;color:#aaa;min-width:18px">#${i+1}</span>
-            ${avHTML(r.c,30)}
-            <p style="font-size:13px;font-weight:${el?700:400};flex:1">${esc(r.c.nome)}</p>
-            <p style="font-size:13px;font-weight:700">${r.v}</p>
-            <p style="font-size:11px;color:#888;min-width:36px;text-align:right">${pct}%</p>
-            ${el?'<span class="badge bdg-ok">✓ Eleito</span>':r.v>0?'<span class="badge bdg-warn">Insuf.</span>':''}
-          </div>
-          <div style="height:7px;background:#eee;border-radius:4px;overflow:hidden;margin-top:5px">
-            <div style="height:100%;border-radius:4px;width:${pct}%;background:${el?'#3B6D11':'var(--p)'};transition:width .6s"></div>
-          </div>
-        </div>`;
-      }).join('')}
-      ${branco>0?`<div style="margin-top:8px;padding:8px 12px;background:#f8f8f6;border-radius:8px;display:flex;align-items:center;gap:8px">
-        <div style="width:30px;height:30px;border-radius:50%;background:#eee;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">⬜</div>
-        <p style="font-size:13px;color:#888;font-style:italic">Votos em branco / nulos: <strong>${branco}</strong></p>
-      </div>`:''}
-    </div>`;
-  }).join('');
-  return`<h3 style="font-weight:700;margin-bottom:14px">Resultado da Eleição</h3>
-  <div style="margin-bottom:14px"><button class="btn btn-p" onclick="exportarResultado()">📊 Exportar Relatório (.xlsx)</button></div>
-  ${html}`;
+  if(!data||!data.cargos)return '<p style="color:#888">Sem dados.</p>';
+  const resultados=data.resultados,cargos=data.cargos,candidatos=data.candidatos,cargosVotados=data.cargosVotados||{};
+
+  var html='<h3 style="font-weight:700;margin-bottom:14px">Resultados por Cargo</h3>'
+    +'<div style="margin-bottom:14px"><button class="btn btn-p" onclick="exportarResultado()">📊 Exportar todos (.xlsx)</button></div>';
+
+  // Mostra cada cargo encerrado
+  data.cargosEncerrados.forEach(function(gid){
+    var cargo=cargos.find(function(g){return g.id===gid;});
+    if(!cargo)return;
+    var res=resultados[gid]||{},branco=res.branco||0;
+    var votantes=(cargosVotados[gid]||[]).length;
+    var maioria=Math.ceil(votantes/2);
+    var rank=Object.keys(res).filter(function(k){return k!=='branco';})
+      .map(function(cid){var c=candidatos.find(function(x){return x.id===cid;});return c?{cid:cid,c:c,v:res[cid]}:null;})
+      .filter(Boolean).sort(function(a,b){return b.v-a.v;});
+    var eleitos=rank.filter(function(r,i){return i<cargo.vagas&&r.v>=maioria&&r.v>0;});
+
+    html+='<div class="card" style="margin-bottom:14px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'
+        +'<div><h3 style="font-weight:700;font-size:16px">'+esc(cargo.nome)+'</h3>'
+        +'<p style="font-size:11px;color:#888">'+cargo.vagas+' vaga'+(cargo.vagas>1?'s':'')+' · '+votantes+' votaram · Maioria: '+maioria+' votos</p></div>'
+        +'<span class="badge '+(eleitos.length>0?'bdg-ok':'bdg-err')+'">'+eleitos.length+' eleito'+(eleitos.length!==1?'s':'')+'</span>'
+      +'</div><div class="divider"></div>';
+
+    html+=rank.map(function(r,i){
+      var pct=votantes>0?Math.round(r.v/votantes*100):0;
+      var el=eleitos.some(function(e){return e.cid===r.cid;});
+      return '<div style="margin-bottom:12px">'
+        +'<div style="display:flex;align-items:center;gap:8px">'
+          +'<span style="font-size:11px;color:#aaa;min-width:18px">#'+(i+1)+'</span>'
+          +avHTML(r.c,30)
+          +'<p style="font-size:13px;font-weight:'+(el?700:400)+';flex:1">'+esc(r.c.nome)+'</p>'
+          +'<p style="font-size:13px;font-weight:700">'+r.v+'</p>'
+          +'<p style="font-size:11px;color:#888;min-width:36px;text-align:right">'+pct+'%</p>'
+          +(el?'<span class="badge bdg-ok">✓ Eleito</span>':(r.v>0?'<span class="badge bdg-warn">Insuf.</span>':''))
+        +'</div>'
+        +'<div style="height:7px;background:#eee;border-radius:4px;overflow:hidden;margin-top:5px">'
+          +'<div style="height:100%;border-radius:4px;width:'+pct+'%;background:'+(el?'#3B6D11':'var(--p)')+';transition:width .6s"></div>'
+        +'</div></div>';
+    }).join('');
+
+    if(branco>0){
+      html+='<div style="margin-top:8px;padding:8px 12px;background:#f8f8f6;border-radius:8px;display:flex;align-items:center;gap:8px">'
+        +'<div style="width:30px;height:30px;border-radius:50%;background:#eee;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">⬜</div>'
+        +'<p style="font-size:13px;color:#888;font-style:italic">Votos em branco / nulos: <strong>'+branco+'</strong></p></div>';
+    }
+
+    // Botão exportar individual
+    html+='<div style="margin-top:12px"><button class="btn btn-sm" data-gid="'+gid+'" onclick="exportarCargoEl(this)">📊 Exportar '+esc(cargo.nome)+' (.xlsx)</button></div>';
+    html+='</div>';
+  });
+
+  return html;
 }
+function exportarCargoEl(el){ var gid=el.getAttribute('data-gid'); if(gid) downloadFile('/api/resultados/cargo/'+gid+'/exportar-xlsx','resultado-cargo.xlsx'); }
+
 
 // ─── TAB: CONFIGURAÇÕES ────────────────────────────────────────────────────────
 function tabConfig(){
