@@ -146,6 +146,14 @@ function fmtCPF(cpf) {
   return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
 }
 
+// Compara CPFs apenas pelos dígitos (ignora máscara/formatação)
+function cpfDigits(cpf){ return (cpf||'').replace(/\D/g,''); }
+function findUserByCPF(cpf){
+  const d=cpfDigits(cpf);
+  if(d.length!==11)return null;
+  return ST.users.find(u=>cpfDigits(u.cpf)===d)||null;
+}
+
 // ─── Formata data/hora BR ─────────────────────────────────────────────────────
 function fmtDataHora(iso) {
   if (!iso) return '—';
@@ -179,7 +187,7 @@ function importarMembros(rows) {
       if(!validCPF(cpfLimpo)){erros.push('CPF inválido: '+cpfRaw);skipped++;continue;}
       cpfFmt=fmtCPF(cpfLimpo);
       // Pula se CPF já cadastrado
-      if(ST.users.find(u=>u.cpf&&u.cpf===cpfFmt)){skipped++;continue;}
+      if(ST.users.find(u=>u.cpf&&cpfDigits(u.cpf)===cpfDigits(cpfFmt))){skipped++;continue;}
     }
     // Pula se nome exatamente igual já existe sem CPF (evita duplicata)
     if(!cpfFmt&&ST.users.find(u=>u.nome.toLowerCase()===nome.toLowerCase()&&!u.cpf)){skipped++;continue;}
@@ -330,7 +338,7 @@ const server = http.createServer(async(req,res)=>{
 
   if(m==='POST'&&pn==='/api/login-eleitor'){
     const{cpf}=await jsonBody(req);
-    const u=ST.users.find(x=>x.cpf===cpf);
+    const u=findUserByCPF(cpf);
     if(!u)return sendJSON(res,{error:'CPF não encontrado no cadastro.'},401);
     if(!presIncludes(ST.presentes,u.id))return sendJSON(res,{error:'Você não está marcado como presente.'},403);
     // No modelo por cargo, verifica se já votou no cargo ATIVO
@@ -369,7 +377,7 @@ const server = http.createServer(async(req,res)=>{
   if(m==='POST'&&pn==='/api/checkin/buscar'){
     const{cpf}=await jsonBody(req);
     if(!cpf)return sendJSON(res,{error:'CPF obrigatório.'},400);
-    const u=ST.users.find(x=>x.cpf===cpf);
+    const u=findUserByCPF(cpf);
     // CPF não encontrado — retorna flag para mostrar busca por nome
     if(!u)return sendJSON(res,{naoEncontrado:true,cpf});
     const entry=presFindEntry(ST.presentes,u.id);
@@ -414,7 +422,7 @@ const server = http.createServer(async(req,res)=>{
     if(!validCPF(cpfLimpo))return sendJSON(res,{error:'CPF inválido. Verifique os dígitos.'},400);
     const cpfFmt=fmtCPF(cpfLimpo);
     // Garante que o CPF não está em uso por outro membro
-    const outro=ST.users.find(x=>x.cpf&&x.cpf===cpfFmt&&x.id!==userId);
+    const outro=ST.users.find(x=>x.cpf&&cpfDigits(x.cpf)===cpfDigits(cpfFmt)&&x.id!==userId);
     if(outro)return sendJSON(res,{error:'Este CPF já está cadastrado para outro membro.'},409);
     // Salva o CPF no cadastro
     u.cpf=cpfFmt;
@@ -428,7 +436,7 @@ const server = http.createServer(async(req,res)=>{
 
   if(m==='POST'&&pn==='/api/checkin/confirmar'){
     const{cpf}=await jsonBody(req);
-    const u=ST.users.find(x=>x.cpf===cpf);
+    const u=findUserByCPF(cpf);
     if(!u)return sendJSON(res,{error:'CPF não encontrado.'},404);
     if(presIncludes(ST.presentes,u.id))return sendJSON(res,{ok:true,msg:'Presença já confirmada.',user:{id:u.id,nome:u.nome}});
     presAdd(ST.presentes,u.id);saveState(ST);
@@ -529,7 +537,7 @@ const server = http.createServer(async(req,res)=>{
       const cpfLimpo=cpf.replace(/\D/g,'');
       if(!validCPF(cpfLimpo))return sendJSON(res,{error:'CPF inválido.'},400);
       cpfFmt=fmtCPF(cpfLimpo);
-      if(ST.users.find(u=>u.cpf&&u.cpf===cpfFmt))return sendJSON(res,{error:'CPF já cadastrado.'},409);
+      if(ST.users.find(u=>u.cpf&&cpfDigits(u.cpf)===cpfDigits(cpfFmt)))return sendJSON(res,{error:'CPF já cadastrado.'},409);
     }
     const u={id:genId(),nome:nome.trim(),cpf:cpfFmt};ST.users.push(u);saveState(ST);
     return sendJSON(res,{ok:true,user:u});
@@ -543,7 +551,7 @@ const server = http.createServer(async(req,res)=>{
       const cl=b.cpf.replace(/\D/g,'');
       if(!validCPF(cl))return sendJSON(res,{error:'CPF inválido.'},400);
       const cf=fmtCPF(cl);
-      if(ST.users.find(x=>x.cpf===cf&&x.id!==id))return sendJSON(res,{error:'CPF já em uso.'},409);
+      if(ST.users.find(x=>cpfDigits(x.cpf)===cpfDigits(cf)&&x.id!==id))return sendJSON(res,{error:'CPF já em uso.'},409);
       u.cpf=cf;
     }
     saveState(ST);return sendJSON(res,{ok:true,user:u});
@@ -753,7 +761,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg,#f0ede6);mi
 h1{font-size:21px;font-weight:700;margin-bottom:6px}
 .sub{font-size:13px;color:#888;margin-bottom:20px;line-height:1.5}
 .flabel{font-size:12px;color:#666;display:block;margin-bottom:5px;font-weight:600}
-input[type=text]{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid #ddd;font-size:16px;outline:none;transition:border-color .15s;background:#fafaf8;font-family:inherit}
+input[type=text]{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid #ddd;font-size:16px;outline:none;transition:border-color .15s;background:#fafaf8;font-family:inherit;-webkit-text-security:none !important;text-security:none !important;letter-spacing:.5px}
 input[type=text]:focus{border-color:var(--p,#185FA5)}
 .btn{width:100%;margin-top:12px;padding:13px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer;background:var(--p,#185FA5);color:#fff;transition:opacity .15s}
 .btn:disabled{opacity:.5;cursor:not-allowed}
@@ -797,7 +805,7 @@ input[type=text]:focus{border-color:var(--p,#185FA5)}
     <p class="sub">Digite seu CPF para confirmar sua presença.</p>
 
     <label class="flabel">Seu CPF</label>
-    <input type="text" id="cpf-in" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="off">
+    <input type="text" id="cpf-in" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" name="documento-checkin">
     <div id="msg-cpf" style="display:none"></div>
     <button class="btn" id="btn-cpf" onclick="buscarCPF()">Confirmar presença</button>
 
@@ -842,7 +850,7 @@ input[type=text]:focus{border-color:var(--p,#185FA5)}
       Para confirmar sua presença, precisamos registrar seu CPF.
     </p>
     <label class="flabel">Seu CPF</label>
-    <input type="text" id="cc-cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="off">
+    <input type="text" id="cc-cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" name="documento-confirma">
     <div id="cc-err" class="msg-err" style="display:none"></div>
     <div class="btn-row">
       <button class="bc" onclick="fecharModal()">Cancelar</button>
