@@ -764,8 +764,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg,#f0ede6);mi
 h1{font-size:21px;font-weight:700;margin-bottom:6px}
 .sub{font-size:13px;color:#888;margin-bottom:20px;line-height:1.5}
 .flabel{font-size:12px;color:#666;display:block;margin-bottom:5px;font-weight:600}
-input[type=text]{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid #ddd;font-size:16px;outline:none;transition:border-color .15s;background:#fafaf8;font-family:inherit;-webkit-text-security:none !important;text-security:none !important;letter-spacing:.5px}
-input[type=text]:focus{border-color:var(--p,#185FA5)}
+input{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid #ddd;font-size:16px;outline:none;transition:border-color .15s;background:#fafaf8;font-family:inherit;-webkit-text-security:none !important;text-security:none !important}
+input:focus{border-color:var(--p,#185FA5)}
 .btn{width:100%;margin-top:12px;padding:13px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer;background:var(--p,#185FA5);color:#fff;transition:opacity .15s}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .btn-sec{background:transparent;color:var(--p,#185FA5);border:1.5px solid var(--p,#185FA5);margin-top:10px}
@@ -808,7 +808,7 @@ input[type=text]:focus{border-color:var(--p,#185FA5)}
     <p class="sub">Digite seu CPF para confirmar sua presença.</p>
 
     <label class="flabel">Seu CPF</label>
-    <input type="text" id="cpf-in" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" name="documento-checkin">
+    <input type="tel" id="cpf-in" inputmode="numeric" placeholder="Digite apenas os números" maxlength="14" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
     <div id="msg-cpf" style="display:none"></div>
     <button class="btn" id="btn-cpf" onclick="buscarCPF()">Confirmar presença</button>
 
@@ -853,7 +853,7 @@ input[type=text]:focus{border-color:var(--p,#185FA5)}
       Para confirmar sua presença, precisamos registrar seu CPF.
     </p>
     <label class="flabel">Seu CPF</label>
-    <input type="text" id="cc-cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" name="documento-confirma">
+    <input type="tel" id="cc-cpf" inputmode="numeric" placeholder="Digite apenas os números" maxlength="14" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
     <div id="cc-err" class="msg-err" style="display:none"></div>
     <div class="btn-row">
       <button class="bc" onclick="fecharModal()">Cancelar</button>
@@ -884,25 +884,28 @@ input[type=text]:focus{border-color:var(--p,#185FA5)}
     if(c.logoUrl) document.getElementById('logo-wrap').innerHTML='<img id="logo-img" src="'+c.logoUrl+'">';
     document.getElementById('nome-inst').textContent='Check-in — '+(c.nomeInstituicao||'Eleição');
   }catch(e){}
-  // Garante que os campos de CPF NÃO fiquem mascarados (alguns navegadores/gerenciadores escondem)
+  // Garante que os campos de CPF NÃO fiquem mascarados pelo navegador
   ['cpf-in','cc-cpf'].forEach(function(id){
     var el=document.getElementById(id);
     if(el){
       el.style.webkitTextSecurity='none';
       el.style.textSecurity='none';
-      el.setAttribute('type','text');
     }
   });
+  // Pré-preenche CPF se veio por querystring (?cpf=)
+  var urlCPF=new URLSearchParams(window.location.search).get('cpf');
+  if(urlCPF){
+    var digits=urlCPF.replace(/\D/g,'').slice(0,11);
+    var inp=document.getElementById('cpf-in');
+    if(inp&&digits){
+      inp.setAttribute('data-digits',digits);
+      inp.value=formataDigitos(digits);
+      window.history.replaceState({},'','/checkin');
+    }
+  }
 })();
 
 // ── Utilitários ────────────────────────────────────────────────────
-function fmtCPF(v){
-  var d=v.replace(/\D/g,'');
-  if(d.length>9)  d=d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6,9)+'-'+d.slice(9);
-  else if(d.length>6) d=d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6);
-  else if(d.length>3) d=d.slice(0,3)+'.'+d.slice(3);
-  return d.slice(0,14);
-}
 function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function msg(elId, text, type){
   var el=document.getElementById(elId);
@@ -913,21 +916,57 @@ function msg(elId, text, type){
 }
 function hideMsg(elId){ var el=document.getElementById(elId); if(el) el.style.display='none'; }
 
-// Bind CPF inputs
-document.getElementById('cpf-in').addEventListener('input',function(e){e.target.value=fmtCPF(e.target.value);});
-document.getElementById('cpf-in').addEventListener('keydown',function(e){if(e.key==='Enter')buscarCPF();});
-document.getElementById('cc-cpf').addEventListener('input',function(e){e.target.value=fmtCPF(e.target.value);});
-document.getElementById('cc-cpf').addEventListener('keydown',function(e){if(e.key==='Enter')cadastrarCPF();});
+// ── CPF: máscara robusta que guarda os dígitos crus separadamente ──
+// Guarda os dígitos reais em data-digits, independente do que é exibido.
+function bindCPF(inputId, onEnter){
+  var el=document.getElementById(inputId);
+  if(!el)return;
+  // Força o campo a NUNCA ficar mascarado pelo navegador
+  el.style.webkitTextSecurity='none';
+  el.style.textSecurity='none';
+  el.setAttribute('data-digits','');
+
+  el.addEventListener('input',function(e){
+    // Extrai só os dígitos do que foi digitado
+    var digits=(e.target.value||'').replace(/\D/g,'').slice(0,11);
+    // Guarda os dígitos crus — fonte da verdade
+    e.target.setAttribute('data-digits',digits);
+    // Exibe formatado
+    e.target.value=formataDigitos(digits);
+  });
+  el.addEventListener('keydown',function(e){if(e.key==='Enter')onEnter();});
+}
+// Formata uma string de dígitos puros para exibição
+function formataDigitos(d){
+  d=(d||'').replace(/\D/g,'').slice(0,11);
+  if(d.length>9)  return d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6,9)+'-'+d.slice(9);
+  if(d.length>6)  return d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6);
+  if(d.length>3)  return d.slice(0,3)+'.'+d.slice(3);
+  return d;
+}
+// Lê os dígitos REAIS do campo (nunca o texto exibido, que pode estar mascarado)
+function lerDigitosCPF(inputId){
+  var el=document.getElementById(inputId);
+  if(!el)return '';
+  // Prioriza data-digits; se vazio, extrai do value como fallback
+  var d=el.getAttribute('data-digits')||'';
+  if(!d) d=(el.value||'').replace(/\D/g,'');
+  return d.slice(0,11);
+}
+
+bindCPF('cpf-in', buscarCPF);
+bindCPF('cc-cpf', cadastrarCPF);
 
 var _cpfAtual='', _membroSel=null, _debTimer=null;
 
 // ── Fluxo 1: Busca por CPF ─────────────────────────────────────────
 async function buscarCPF(){
-  var cpf=(document.getElementById('cpf-in').value||'').trim();
+  var digits=lerDigitosCPF('cpf-in');  // dígitos REAIS, nunca o texto exibido
   hideMsg('msg-cpf');
-  if(cpf.replace(/\D/g,'').length<11){
+  if(digits.length!==11){
     msg('msg-cpf','Digite um CPF completo com 11 dígitos.','err'); return;
   }
+  var cpf=formataDigitos(digits);  // formato 000.000.000-00 para enviar
   var btn=document.getElementById('btn-cpf');
   btn.disabled=true; btn.textContent='Buscando...';
   try{
@@ -1045,11 +1084,12 @@ function selecionarMembro(el){
 
 // ── Modal: cadastrar/confirmar CPF pelo nome ──────────────────────
 async function cadastrarCPF(){
-  var cpf=(document.getElementById('cc-cpf').value||'').trim();
+  var digits=lerDigitosCPF('cc-cpf');  // dígitos REAIS
   hideMsg('cc-err');
-  if(cpf.replace(/\D/g,'').length<11){
+  if(digits.length!==11){
     msg('cc-err','Digite o CPF completo com 11 dígitos.','err'); return;
   }
+  var cpf=formataDigitos(digits);
   var btn=document.getElementById('btn-cc');
   btn.disabled=true;
   var btnTxt=btn.textContent;
