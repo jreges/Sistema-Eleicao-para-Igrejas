@@ -497,7 +497,7 @@ function telaVoto() {
   var falta = cargo.vagas - sel.length;
 
   // Candidatos do cargo ativo
-  var candsCargo = App.cands.filter(function(c){ return c.cargoId === cargo.id; });
+  var candsCargo = App.cands.filter(function(c){ return c.cargoId === cargo.id; }).sort(function(a,b){ return a.nome.localeCompare(b.nome,'pt-BR'); });
 
   var cands = '';
   for (var ci = 0; ci < candsCargo.length; ci++) {

@@ -635,7 +635,7 @@ function tabCandidatos(){
     html+='<p style="color:#aaa;font-size:13px;text-align:center;padding:20px">Nenhum candidato cadastrado ainda.</p>';
   } else {
     S.cargos.forEach(function(g){
-      var cands=S.candidatos.filter(function(c){return c.cargoId===g.id;});
+      var cands=S.candidatos.filter(function(c){return c.cargoId===g.id;}).sort(function(a,b){return a.nome.localeCompare(b.nome,'pt-BR');});
       if(cands.length===0)return;
       html+='<div style="margin-bottom:18px">'
         +'<p style="font-size:13px;font-weight:700;color:var(--p);margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid var(--pbg)">'
@@ -644,7 +644,7 @@ function tabCandidatos(){
       html+='</div>';
     });
     // Candidatos sem cargo válido (órfãos)
-    var orfaos=S.candidatos.filter(function(c){return !S.cargos.find(function(g){return g.id===c.cargoId;});});
+    var orfaos=S.candidatos.filter(function(c){return !S.cargos.find(function(g){return g.id===c.cargoId;});}).sort(function(a,b){return a.nome.localeCompare(b.nome,'pt-BR');});
     if(orfaos.length>0){
       html+='<div style="margin-bottom:18px">'
         +'<p style="font-size:13px;font-weight:700;color:#a32d2d;margin-bottom:8px">⚠ Sem cargo (cargo removido)</p>';

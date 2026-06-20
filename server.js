@@ -217,7 +217,7 @@ function jsonBody(req) { return new Promise((ok,ko)=>{let b='';req.on('data',c=>
 // ─── Respostas ────────────────────────────────────────────────────────────────
 const MIME={'.html':'text/html','.js':'application/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.svg':'image/svg+xml'};
 function sendJSON(res,data,status=200){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));}
-function sendHTML(res,html){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN'});res.end(html);}
+function sendHTML(res,html){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'});res.end(html);}
 function sendXLSX(res,buf,name){res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="${name}"`,'Content-Length':buf.length});res.end(buf);}
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -252,7 +252,10 @@ function apurar(){
 // SERVIDOR
 // ══════════════════════════════════════════════════════════════════════════════
 const server = http.createServer(async(req,res)=>{
-  const p=url.parse(req.url,true),pn=decodeURIComponent(p.pathname),m=req.method;
+  const p=url.parse(req.url,true),m=req.method;
+  let pn;
+  try { pn=decodeURIComponent(p.pathname); }
+  catch(e){ pn=p.pathname; }  // URL malformada — usa o caminho cru sem decodificar
   res.setHeader('Access-Control-Allow-Origin','*');
   res.setHeader('Access-Control-Allow-Methods','GET,POST,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers','Content-Type,X-Admin-Token');
@@ -881,6 +884,15 @@ input[type=text]:focus{border-color:var(--p,#185FA5)}
     if(c.logoUrl) document.getElementById('logo-wrap').innerHTML='<img id="logo-img" src="'+c.logoUrl+'">';
     document.getElementById('nome-inst').textContent='Check-in — '+(c.nomeInstituicao||'Eleição');
   }catch(e){}
+  // Garante que os campos de CPF NÃO fiquem mascarados (alguns navegadores/gerenciadores escondem)
+  ['cpf-in','cc-cpf'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el){
+      el.style.webkitTextSecurity='none';
+      el.style.textSecurity='none';
+      el.setAttribute('type','text');
+    }
+  });
 })();
 
 // ── Utilitários ────────────────────────────────────────────────────
