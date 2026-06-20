@@ -621,8 +621,7 @@ function tabCandidatos(){
   html+='<div class="card" style="margin-bottom:14px">'
     +selMembro
     +selCargo
-    +'<div class="field"><label>Idade</label>'
-      +'<input id="c-idade" class="input" type="number" min="1" placeholder="Idade" style="max-width:120px"></div>'
+    
     +'<div class="field"><label>Foto <span style="color:#a32d2d">*</span> obrigatória</label>'
       +'<label class="btn btn-p btn-sm" style="cursor:pointer;width:fit-content;margin-top:2px">📷 Escolher foto'
         +'<input type="file" id="c-foto-in" accept="image/*" style="display:none" onchange="prevFoto(this)"></label>'
@@ -664,7 +663,6 @@ function candidatoCard(c){
     +foto
     +'<div style="flex:1">'
       +'<p style="font-weight:600;font-size:13px">'+esc(c.nome)+'</p>'
-      +'<p style="font-size:11px;color:#888">'+c.idade+' anos</p>'
       +(!c.fotoUrl?'<p style="font-size:10px;color:#a32d2d;font-weight:600;margin-top:2px">⚠ Foto obrigatória</p>':'')
     +'</div>'
     +'<label class="btn '+(c.fotoUrl?'btn-p':'btn-danger')+' btn-sm" style="cursor:pointer">'
@@ -689,12 +687,11 @@ function prevFoto(input){
 async function addCand(){
   const userId=($('c-userid')?$('c-userid').value:'');
   const cargoId=($('c-cargo')?$('c-cargo').value:'');
-  const idade=($('c-idade').value||'').trim();
+
   if(!userId)      {toast('Selecione um membro.','warn');return;}
   if(!cargoId)     {toast('Selecione o cargo que o candidato irá concorrer.','warn');return;}
-  if(!idade)       {toast('Informe a idade.','warn');return;}
   if(!_fotoCandFile){toast('A foto é obrigatória.','warn');return;}
-  const res=await api.post('/api/candidatos',{userId,idade,cargoId});
+  const res=await api.post('/api/candidatos',{userId,cargoId});
   if(res.error){toast(res.error,'danger');return;}
   // Upload da foto
   if(res.candidato&&res.candidato.id){

@@ -759,16 +759,17 @@ function checkinPage() {
 <title>Check-in</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg,#f0ede6);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:420px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
-h1{font-size:21px;font-weight:700;margin-bottom:6px}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg,#f0ede6);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;color:#1a1a18}
+.card{background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:430px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+h1{font-size:21px;font-weight:700;margin-bottom:6px;line-height:1.25}
 .sub{font-size:13px;color:#888;margin-bottom:20px;line-height:1.5}
 .flabel{font-size:12px;color:#666;display:block;margin-bottom:5px;font-weight:600}
-input{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid #ddd;font-size:16px;outline:none;transition:border-color .15s;background:#fafaf8;font-family:inherit;-webkit-text-security:none !important;text-security:none !important}
-input:focus{border-color:var(--p,#185FA5)}
-.btn{width:100%;margin-top:12px;padding:13px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer;background:var(--p,#185FA5);color:#fff;transition:opacity .15s}
+.inp{width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid #ddd;font-size:18px;outline:none;background:#fafaf8;font-family:inherit;letter-spacing:.5px;color:#1a1a18}
+.inp:focus{border-color:var(--p,#185FA5)}
+.inp::placeholder{color:#bbb;letter-spacing:normal;font-size:15px}
+.btn{width:100%;margin-top:12px;padding:13px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer;background:var(--p,#185FA5);color:#fff}
 .btn:disabled{opacity:.5;cursor:not-allowed}
-.btn-sec{background:transparent;color:var(--p,#185FA5);border:1.5px solid var(--p,#185FA5);margin-top:10px}
+.btn-sec{background:transparent;color:var(--p,#185FA5);border:1.5px solid var(--p,#185FA5)}
 .btn-green{background:var(--s,#3B6D11)}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
 .modal{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:380px}
@@ -783,15 +784,12 @@ input:focus{border-color:var(--p,#185FA5)}
 .msg-ok{background:#eaf3de;color:#3B6D11;border-radius:8px;padding:10px;font-size:13px;margin-top:10px;font-weight:600}
 .info-box{background:#e8f0fe;color:#185FA5;border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.6;margin-bottom:14px}
 .divider{border:none;border-top:1px solid #eee;margin:18px 0}
-/* busca por nome */
-.member-card{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:10px;border:1.5px solid #ddd;background:#fff;cursor:pointer;margin-bottom:7px;transition:all .15s}
-.member-card:hover{border-color:var(--p,#185FA5);background:#f0f6ff}
-.member-card.sel{border-color:var(--p,#185FA5);background:#e6f1fb}
+.member-card{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:10px;border:1.5px solid #ddd;background:#fff;cursor:pointer;margin-bottom:7px}
+.member-card:active{border-color:var(--p,#185FA5);background:#f0f6ff}
 .member-av{width:38px;height:38px;border-radius:50%;background:var(--p,#185FA5);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0}
 .cpf-badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;margin-top:3px}
 .sem-cpf{background:#faeeda;color:#854F0B}
 .tem-cpf{background:#eee;color:#666}
-/* tela sucesso */
 .redirect-bar{height:4px;background:#eee;border-radius:2px;margin-top:16px;overflow:hidden}
 .redirect-fill{height:100%;background:var(--s,#3B6D11);border-radius:2px;transition:width 3s linear}
 #logo-img{max-height:52px}
@@ -799,340 +797,353 @@ input:focus{border-color:var(--p,#185FA5)}
 </head>
 <body>
 
-<!-- ── TELA PRINCIPAL ───────────────────────────────── -->
+<!-- TELA PRINCIPAL -->
 <div id="tela-cpf">
   <div class="card">
     <div id="logo-wrap" style="text-align:center;margin-bottom:10px"></div>
-    <div style="font-size:42px;text-align:center;margin-bottom:10px">🗳️</div>
+    <div style="font-size:42px;text-align:center;margin-bottom:10px">&#128499;&#65039;</div>
     <h1 id="nome-inst">Check-in</h1>
-    <p class="sub">Digite seu CPF para confirmar sua presença.</p>
+    <p class="sub">Digite seu CPF para confirmar sua presen&ccedil;a.</p>
 
     <label class="flabel">Seu CPF</label>
-    <input type="tel" id="cpf-in" inputmode="numeric" placeholder="Digite apenas os números" maxlength="14" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
+    <input class="inp" id="cpf-in" inputmode="numeric" placeholder="Digite apenas os n&uacute;meros" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <div id="msg-cpf" style="display:none"></div>
-    <button class="btn" id="btn-cpf" onclick="buscarCPF()">Confirmar presença</button>
+    <button class="btn" id="btn-cpf">Confirmar presen&ccedil;a</button>
 
     <hr class="divider" id="div-nome" style="display:none">
 
-    <!-- Painel de busca por nome — aparece quando CPF não encontrado -->
     <div id="painel-nome" style="display:none">
-      <p style="font-size:13px;font-weight:700;margin-bottom:6px">🔍 Procurar meu nome na lista</p>
+      <p style="font-size:13px;font-weight:700;margin-bottom:6px">&#128269; Procurar meu nome na lista</p>
       <div class="info-box">
-        Seu CPF não foi encontrado. Se você está na lista de membros,
+        Seu CPF n&atilde;o foi encontrado. Se voc&ecirc; est&aacute; na lista de membros,
         encontre seu nome abaixo e cadastre seu CPF para fazer o check-in.
       </div>
       <label class="flabel">Digite parte do seu nome</label>
-      <input type="text" id="nome-busca" placeholder="Ex: João" autocomplete="off" oninput="buscarNome(this.value)">
+      <input class="inp" id="nome-busca" placeholder="Ex: Jo&atilde;o" autocomplete="off" style="font-size:16px;letter-spacing:normal">
       <div id="nome-resultados" style="margin-top:10px"></div>
     </div>
   </div>
 </div>
 
-<!-- ── MODAL: confirmar dados (membro com CPF já cadastrado) ─── -->
+<!-- MODAL CONFIRMAR (membro com CPF) -->
 <div class="overlay" id="modal-confirmar" style="display:none">
   <div class="modal">
-    <div style="font-size:34px;text-align:center;margin-bottom:10px">✅</div>
+    <div style="font-size:34px;text-align:center;margin-bottom:10px">&#9989;</div>
     <p style="font-weight:700;font-size:17px;margin-bottom:14px;text-align:center">Confirme seus dados</p>
     <div class="drow"><span class="dl">Nome</span><span class="dv" id="mc-nome"></span></div>
     <div class="drow"><span class="dl">CPF</span><span class="dv" id="mc-cpf"></span></div>
     <div id="mc-err" class="msg-err" style="display:none"></div>
     <div class="btn-row">
-      <button class="bc" onclick="fecharModal()">Cancelar</button>
-      <button class="bg" onclick="confirmarPresenca()">Confirmar ✓</button>
+      <button class="bc" id="mc-cancel">Cancelar</button>
+      <button class="bg" id="mc-ok">Confirmar &#10003;</button>
     </div>
   </div>
 </div>
 
-<!-- ── MODAL: cadastrar CPF (membro sem CPF) ──────────────── -->
-<div class="overlay" id="modal-cadastrar-cpf" style="display:none">
+<!-- MODAL CADASTRAR/CONFIRMAR CPF (via nome) -->
+<div class="overlay" id="modal-cpf" style="display:none">
   <div class="modal">
-    <div style="font-size:34px;text-align:center;margin-bottom:10px">📋</div>
-    <p style="font-weight:700;font-size:17px;margin-bottom:6px;text-align:center">Cadastrar seu CPF</p>
-    <p style="font-size:13px;color:#666;text-align:center;margin-bottom:14px">
-      Olá, <strong id="cc-nome"></strong>!<br>
-      Para confirmar sua presença, precisamos registrar seu CPF.
-    </p>
+    <div style="font-size:34px;text-align:center;margin-bottom:10px">&#128203;</div>
+    <p style="font-weight:700;font-size:17px;margin-bottom:6px;text-align:center" id="cc-titulo">Cadastrar seu CPF</p>
+    <p style="font-size:13px;color:#666;text-align:center;margin-bottom:14px" id="cc-texto"></p>
     <label class="flabel">Seu CPF</label>
-    <input type="tel" id="cc-cpf" inputmode="numeric" placeholder="Digite apenas os números" maxlength="14" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
+    <input class="inp" id="cc-cpf" inputmode="numeric" placeholder="Digite apenas os n&uacute;meros" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <div id="cc-err" class="msg-err" style="display:none"></div>
     <div class="btn-row">
-      <button class="bc" onclick="fecharModal()">Cancelar</button>
-      <button class="bg" id="btn-cc" onclick="cadastrarCPF()">Salvar CPF e confirmar ✓</button>
+      <button class="bc" id="cc-cancel">Cancelar</button>
+      <button class="bg" id="cc-ok">Salvar &#10003;</button>
     </div>
   </div>
 </div>
 
-<!-- ── TELA SUCESSO ────────────────────────────────────────── -->
-<div id="tela-ok" style="display:none;width:100%;max-width:420px">
+<!-- TELA SUCESSO -->
+<div id="tela-ok" style="display:none;width:100%;max-width:430px">
   <div class="card" style="text-align:center">
-    <div style="font-size:62px;margin-bottom:12px">🎉</div>
+    <div style="font-size:62px;margin-bottom:12px">&#127881;</div>
     <h1 id="ok-nome" style="margin-bottom:8px;font-size:20px"></h1>
-    <p style="font-size:14px;color:#666;line-height:1.7">Presença confirmada!<br>Redirecionando para a votação...</p>
+    <p style="font-size:14px;color:#666;line-height:1.7">Presen&ccedil;a confirmada!<br>Redirecionando para a vota&ccedil;&atilde;o...</p>
     <div class="redirect-bar"><div class="redirect-fill" id="redirect-fill" style="width:0%"></div></div>
-    <button class="btn btn-sec" style="margin-top:14px;font-size:13px" onclick="window.location.href='/votar'">Ir agora →</button>
+    <button class="btn btn-sec" style="margin-top:14px;font-size:13px" id="ok-ir">Ir agora &#8594;</button>
   </div>
 </div>
 
 <script>
-// ── Config ─────────────────────────────────────────────────────────
-(async function(){
-  try{
-    var c=await(await fetch('/api/config')).json();
-    document.body.style.background=c.corFundo||'#f0ede6';
-    document.documentElement.style.setProperty('--p',c.corPrimaria||'#185FA5');
-    document.documentElement.style.setProperty('--s',c.corSecundaria||'#3B6D11');
-    if(c.logoUrl) document.getElementById('logo-wrap').innerHTML='<img id="logo-img" src="'+c.logoUrl+'">';
-    document.getElementById('nome-inst').textContent='Check-in — '+(c.nomeInstituicao||'Eleição');
-  }catch(e){}
-  // Garante que os campos de CPF NÃO fiquem mascarados pelo navegador
-  ['cpf-in','cc-cpf'].forEach(function(id){
-    var el=document.getElementById(id);
-    if(el){
-      el.style.webkitTextSecurity='none';
-      el.style.textSecurity='none';
+// ============================================================================
+//  ESTADO — os dígitos do CPF ficam SEMPRE aqui, nunca lidos da tela.
+//  Isso elimina qualquer corrupção por máscara/autofill do navegador.
+// ============================================================================
+var CPF_PRINCIPAL = '';   // dígitos do campo principal
+var CPF_MODAL     = '';   // dígitos do campo do modal (via nome)
+var membroSelecionado = null;
+var debounceTimer = null;
+
+// ── Utilitários ─────────────────────────────────────────────────────────────
+function $(id){ return document.getElementById(id); }
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function soDigitos(s){ return (s||'').replace(/[^0-9]/g,''); }
+
+// Formata 11 dígitos para 000.000.000-00
+function formatar(d){
+  d = soDigitos(d).slice(0,11);
+  var out = d.slice(0,3);
+  if(d.length>3) out += '.' + d.slice(3,6);
+  if(d.length>6) out += '.' + d.slice(6,9);
+  if(d.length>9) out += '-' + d.slice(9,11);
+  return out;
+}
+
+function mostrarMsg(elId, texto, tipo){
+  var el=$(elId); if(!el)return;
+  el.className = (tipo==='ok') ? 'msg-ok' : 'msg-err';
+  el.textContent = texto;
+  el.style.display = 'block';
+}
+function ocultarMsg(elId){ var el=$(elId); if(el) el.style.display='none'; }
+
+// ============================================================================
+//  GERENCIAMENTO DO CAMPO DE CPF
+//  Captura cada tecla, mantém só dígitos numa variável, e reescreve o campo.
+//  Mesmo que o navegador tente mascarar, a variável tem o valor real.
+// ============================================================================
+function ligarCampoCPF(inputId, getDigits, setDigits){
+  var el = $(inputId);
+  if(!el) return;
+
+  // Reforço anti-máscara em runtime
+  try { el.style.webkitTextSecurity = 'none'; el.style.textSecurity = 'none'; } catch(e){}
+
+  el.addEventListener('input', function(){
+    // Pega o que está no campo, extrai SÓ os dígitos
+    var d = soDigitos(el.value).slice(0,11);
+    setDigits(d);              // guarda na variável de estado
+    el.value = formatar(d);    // reescreve formatado
+  });
+
+  // Bloqueia qualquer caractere não numérico no keypress (camada extra)
+  el.addEventListener('keypress', function(ev){
+    var ch = String.fromCharCode(ev.which || ev.keyCode);
+    if(ev.which && !/[0-9]/.test(ch) && ev.which !== 13){
+      ev.preventDefault();
     }
   });
-  // Pré-preenche CPF se veio por querystring (?cpf=)
-  var urlCPF=new URLSearchParams(window.location.search).get('cpf');
+}
+
+// ── Configuração inicial ─────────────────────────────────────────────────────
+(function init(){
+  // Carrega config visual
+  fetch('/api/config').then(function(r){return r.json();}).then(function(c){
+    try{
+      document.body.style.background = c.corFundo || '#f0ede6';
+      document.documentElement.style.setProperty('--p', c.corPrimaria || '#185FA5');
+      document.documentElement.style.setProperty('--s', c.corSecundaria || '#3B6D11');
+      document.documentElement.style.setProperty('--bg', c.corFundo || '#f0ede6');
+      if(c.logoUrl) $('logo-wrap').innerHTML = '<img id="logo-img" src="' + esc(c.logoUrl) + '">';
+      $('nome-inst').textContent = 'Check-in — ' + (c.nomeInstituicao || 'Eleição');
+    }catch(e){}
+  }).catch(function(){});
+
+  // Liga os campos de CPF
+  ligarCampoCPF('cpf-in',
+    function(){ return CPF_PRINCIPAL; },
+    function(d){ CPF_PRINCIPAL = d; });
+  ligarCampoCPF('cc-cpf',
+    function(){ return CPF_MODAL; },
+    function(d){ CPF_MODAL = d; });
+
+  // Liga botões e eventos
+  $('btn-cpf').addEventListener('click', buscarCPF);
+  $('cpf-in').addEventListener('keypress', function(ev){ if((ev.which||ev.keyCode)===13) buscarCPF(); });
+  $('nome-busca').addEventListener('input', function(){ buscarNome(this.value); });
+  $('mc-cancel').addEventListener('click', fecharModais);
+  $('mc-ok').addEventListener('click', confirmarPresenca);
+  $('cc-cancel').addEventListener('click', fecharModais);
+  $('cc-ok').addEventListener('click', salvarCPF);
+  $('cc-cpf').addEventListener('keypress', function(ev){ if((ev.which||ev.keyCode)===13) salvarCPF(); });
+  $('ok-ir').addEventListener('click', function(){ window.location.href='/votar'; });
+
+  // Pré-preenche CPF se veio por ?cpf=
+  var urlCPF = new URLSearchParams(window.location.search).get('cpf');
   if(urlCPF){
-    var digits=urlCPF.replace(/\D/g,'').slice(0,11);
-    var inp=document.getElementById('cpf-in');
-    if(inp&&digits){
-      inp.setAttribute('data-digits',digits);
-      inp.value=formataDigitos(digits);
-      window.history.replaceState({},'','/checkin');
+    var d = soDigitos(urlCPF).slice(0,11);
+    if(d){
+      CPF_PRINCIPAL = d;
+      $('cpf-in').value = formatar(d);
+      window.history.replaceState({}, '', '/checkin');
     }
   }
 })();
 
-// ── Utilitários ────────────────────────────────────────────────────
-function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function msg(elId, text, type){
-  var el=document.getElementById(elId);
-  if(!el)return;
-  el.className=type==='ok'?'msg-ok':'msg-err';
-  el.textContent=text;
-  el.style.display='block';
-}
-function hideMsg(elId){ var el=document.getElementById(elId); if(el) el.style.display='none'; }
-
-// ── CPF: máscara robusta que guarda os dígitos crus separadamente ──
-// Guarda os dígitos reais em data-digits, independente do que é exibido.
-function bindCPF(inputId, onEnter){
-  var el=document.getElementById(inputId);
-  if(!el)return;
-  // Força o campo a NUNCA ficar mascarado pelo navegador
-  el.style.webkitTextSecurity='none';
-  el.style.textSecurity='none';
-  el.setAttribute('data-digits','');
-
-  el.addEventListener('input',function(e){
-    // Extrai só os dígitos do que foi digitado
-    var digits=(e.target.value||'').replace(/\D/g,'').slice(0,11);
-    // Guarda os dígitos crus — fonte da verdade
-    e.target.setAttribute('data-digits',digits);
-    // Exibe formatado
-    e.target.value=formataDigitos(digits);
-  });
-  el.addEventListener('keydown',function(e){if(e.key==='Enter')onEnter();});
-}
-// Formata uma string de dígitos puros para exibição
-function formataDigitos(d){
-  d=(d||'').replace(/\D/g,'').slice(0,11);
-  if(d.length>9)  return d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6,9)+'-'+d.slice(9);
-  if(d.length>6)  return d.slice(0,3)+'.'+d.slice(3,6)+'.'+d.slice(6);
-  if(d.length>3)  return d.slice(0,3)+'.'+d.slice(3);
-  return d;
-}
-// Lê os dígitos REAIS do campo (nunca o texto exibido, que pode estar mascarado)
-function lerDigitosCPF(inputId){
-  var el=document.getElementById(inputId);
-  if(!el)return '';
-  // Prioriza data-digits; se vazio, extrai do value como fallback
-  var d=el.getAttribute('data-digits')||'';
-  if(!d) d=(el.value||'').replace(/\D/g,'');
-  return d.slice(0,11);
-}
-
-bindCPF('cpf-in', buscarCPF);
-bindCPF('cc-cpf', cadastrarCPF);
-
-var _cpfAtual='', _membroSel=null, _debTimer=null;
-
-// ── Fluxo 1: Busca por CPF ─────────────────────────────────────────
-async function buscarCPF(){
-  var digits=lerDigitosCPF('cpf-in');  // dígitos REAIS, nunca o texto exibido
-  hideMsg('msg-cpf');
-  if(digits.length!==11){
-    msg('msg-cpf','Digite um CPF completo com 11 dígitos.','err'); return;
+// ============================================================================
+//  FLUXO 1 — Buscar por CPF
+// ============================================================================
+function buscarCPF(){
+  ocultarMsg('msg-cpf');
+  // USA A VARIÁVEL DE ESTADO, nunca o texto do campo
+  var digits = CPF_PRINCIPAL;
+  if(digits.length !== 11){
+    mostrarMsg('msg-cpf', 'Digite um CPF completo com 11 dígitos.', 'err');
+    return;
   }
-  var cpf=formataDigitos(digits);  // formato 000.000.000-00 para enviar
-  var btn=document.getElementById('btn-cpf');
-  btn.disabled=true; btn.textContent='Buscando...';
-  try{
-    var r=await fetch('/api/checkin/buscar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf})});
-    var d=await r.json();
-    btn.disabled=false; btn.textContent='Confirmar presença';
+  var cpfFormatado = formatar(digits);
+  var btn = $('btn-cpf');
+  btn.disabled = true; btn.textContent = 'Buscando...';
+
+  fetch('/api/checkin/buscar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ cpf: cpfFormatado })
+  }).then(function(r){return r.json();}).then(function(d){
+    btn.disabled = false; btn.textContent = 'Confirmar presença';
 
     if(d.naoEncontrado){
-      // CPF não está em nenhum cadastro — mostra busca por nome
-      msg('msg-cpf','CPF não encontrado. Procure seu nome abaixo.','err');
-      document.getElementById('div-nome').style.display='block';
-      document.getElementById('painel-nome').style.display='block';
-      document.getElementById('nome-busca').focus();
+      mostrarMsg('msg-cpf', 'CPF não encontrado. Procure seu nome abaixo.', 'err');
+      $('div-nome').style.display = 'block';
+      $('painel-nome').style.display = 'block';
+      $('nome-busca').focus();
       return;
     }
-    if(d.error){ msg('msg-cpf',d.error,'err'); return; }
+    if(d.error){ mostrarMsg('msg-cpf', d.error, 'err'); return; }
     if(d.jaPresente){
-      msg('msg-cpf','✓ Você já está registrado como presente!','ok');
-      setTimeout(function(){window.location.href='/votar?cpf='+encodeURIComponent(cpf);},2000);
+      mostrarMsg('msg-cpf', 'Você já está registrado como presente!', 'ok');
+      setTimeout(function(){ window.location.href='/votar?cpf='+encodeURIComponent(cpfFormatado); }, 1800);
       return;
     }
     // Abre modal de confirmação
-    _cpfAtual=cpf;
-    document.getElementById('mc-nome').textContent=d.user.nome;
-    document.getElementById('mc-cpf').textContent=d.user.cpf;
-    hideMsg('mc-err');
-    document.getElementById('modal-confirmar').style.display='flex';
-  }catch(e){
-    btn.disabled=false; btn.textContent='Confirmar presença';
-    msg('msg-cpf','Erro de conexão. Tente novamente.','err');
-  }
+    $('mc-nome').textContent = d.user.nome;
+    $('mc-cpf').textContent  = d.user.cpf;
+    ocultarMsg('mc-err');
+    $('modal-confirmar').style.display = 'flex';
+  }).catch(function(){
+    btn.disabled = false; btn.textContent = 'Confirmar presença';
+    mostrarMsg('msg-cpf', 'Erro de conexão. Tente novamente.', 'err');
+  });
 }
 
-// ── Modal: confirmar presença (membro com CPF) ────────────────────
-function fecharModal(){
-  document.getElementById('modal-confirmar').style.display='none';
-  document.getElementById('modal-cadastrar-cpf').style.display='none';
-}
-async function confirmarPresenca(){
-  hideMsg('mc-err');
-  try{
-    var r=await fetch('/api/checkin/confirmar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:_cpfAtual})});
-    var d=await r.json();
-    if(d.error){ msg('mc-err',d.error,'err'); return; }
-    fecharModal();
-    mostrarSucesso(d.user.nome, _cpfAtual);
-  }catch(e){ msg('mc-err','Erro de conexão. Tente novamente.','err'); }
+function fecharModais(){
+  $('modal-confirmar').style.display = 'none';
+  $('modal-cpf').style.display = 'none';
 }
 
-// ── Fluxo 2: Busca por nome ────────────────────────────────────────
+function confirmarPresenca(){
+  ocultarMsg('mc-err');
+  var cpfFormatado = formatar(CPF_PRINCIPAL);
+  fetch('/api/checkin/confirmar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ cpf: cpfFormatado })
+  }).then(function(r){return r.json();}).then(function(d){
+    if(d.error){ mostrarMsg('mc-err', d.error, 'err'); return; }
+    fecharModais();
+    sucesso(d.user.nome, cpfFormatado);
+  }).catch(function(){ mostrarMsg('mc-err', 'Erro de conexão.', 'err'); });
+}
+
+// ============================================================================
+//  FLUXO 2 — Buscar por nome
+// ============================================================================
 function buscarNome(q){
-  if(_debTimer) clearTimeout(_debTimer);
-  _debTimer=setTimeout(function(){ executarBusca(q); },320);
+  if(debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(function(){ executarBuscaNome(q); }, 320);
 }
 
-async function executarBusca(q){
-  var res=document.getElementById('nome-resultados');
-  if(!q||q.trim().length<2){
-    res.innerHTML='<p style="font-size:12px;color:#aaa;padding:4px 0">Digite ao menos 2 letras.</p>';
+function executarBuscaNome(q){
+  var res = $('nome-resultados');
+  if(!q || q.trim().length < 2){
+    res.innerHTML = '<p style="font-size:12px;color:#aaa;padding:4px 0">Digite ao menos 2 letras.</p>';
     return;
   }
-  res.innerHTML='<p style="font-size:12px;color:#aaa;padding:4px 0">Buscando...</p>';
-  try{
-    var r=await fetch('/api/checkin/buscar-nome?q='+encodeURIComponent(q.trim()));
-    var d=await r.json();
-    if(!d.users||!d.users.length){
-      res.innerHTML='<p style="font-size:12px;color:#aaa;padding:4px 0">Nenhum membro encontrado com esse nome.</p>';
-      return;
-    }
-    res.innerHTML=d.users.map(function(u){
-      var badge=u.temCPF
-        ?'<span class="cpf-badge tem-cpf">CPF cadastrado</span>'
-        :'<span class="cpf-badge sem-cpf">Sem CPF — será cadastrado</span>';
-      return '<div class="member-card" data-uid="'+u.id+'" data-nome="'+esc(u.nome)+'" data-temcpf="'+(u.temCPF?'1':'0')+'" onclick="selecionarMembro(this)">'
-        +'<div class="member-av">'+esc(u.nome.charAt(0).toUpperCase())+'</div>'
-        +'<div>'
-          +'<p style="font-size:14px;font-weight:600;line-height:1.3">'+esc(u.nome)+'</p>'
-          +badge
-        +'</div>'
-        +'</div>';
-    }).join('');
-  }catch(e){
-    res.innerHTML='<p style="font-size:12px;color:#a32d2d;padding:4px 0">Erro ao buscar. Tente novamente.</p>';
-  }
-}
-
-function selecionarMembro(el){
-  // Destaca
-  document.querySelectorAll('.member-card').forEach(function(c){c.classList.remove('sel');});
-  el.classList.add('sel');
-  var uid=el.getAttribute('data-uid');
-  var nome=el.getAttribute('data-nome');
-  var temCPF=el.getAttribute('data-temcpf')==='1';
-  _membroSel={id:uid, nome:nome, temCPF:temCPF};
-
-  if(temCPF){
-    // Membro já tem CPF — pede para digitar o CPF para verificação de identidade
-    document.getElementById('cc-nome').textContent=nome;
-    // Reusa o mesmo modal mas com mensagem diferente
-    document.querySelector('#modal-cadastrar-cpf p:nth-child(3)').innerHTML=
-      'Olá, <strong>'+esc(nome)+'</strong>!<br>Digite seu CPF para confirmar sua identidade e fazer o check-in.';
-    document.querySelector('#btn-cc').textContent='Confirmar check-in ✓';
-  } else {
-    // Membro sem CPF — vai cadastrar
-    document.getElementById('cc-nome').textContent=nome;
-    document.querySelector('#modal-cadastrar-cpf p:nth-child(3)').innerHTML=
-      'Olá, <strong>'+esc(nome)+'</strong>!<br>Para confirmar sua presença, precisamos registrar seu CPF no sistema.';
-    document.querySelector('#btn-cc').textContent='Salvar CPF e confirmar ✓';
-  }
-  document.getElementById('cc-cpf').value='';
-  hideMsg('cc-err');
-  document.getElementById('modal-cadastrar-cpf').style.display='flex';
-  setTimeout(function(){ document.getElementById('cc-cpf').focus(); },100);
-}
-
-// ── Modal: cadastrar/confirmar CPF pelo nome ──────────────────────
-async function cadastrarCPF(){
-  var digits=lerDigitosCPF('cc-cpf');  // dígitos REAIS
-  hideMsg('cc-err');
-  if(digits.length!==11){
-    msg('cc-err','Digite o CPF completo com 11 dígitos.','err'); return;
-  }
-  var cpf=formataDigitos(digits);
-  var btn=document.getElementById('btn-cc');
-  btn.disabled=true;
-  var btnTxt=btn.textContent;
-  btn.textContent='Processando...';
-
-  try{
-    var r,d;
-    if(_membroSel.temCPF){
-      // Já tem CPF — verifica CPF digitado e faz check-in via confirmar normal
-      r=await fetch('/api/checkin/confirmar-por-id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:_membroSel.id,cpf:cpf})});
-    } else {
-      // Sem CPF — registra CPF e confirma presença
-      r=await fetch('/api/checkin/registrar-cpf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:_membroSel.id,cpf:cpf})});
-    }
-    d=await r.json();
-    btn.disabled=false; btn.textContent=btnTxt;
-    if(d.error){ msg('cc-err',d.error,'err'); return; }
-    fecharModal();
-    mostrarSucesso(d.user.nome, d.user.cpf);
-  }catch(e){
-    btn.disabled=false; btn.textContent=btnTxt;
-    msg('cc-err','Erro de conexão. Tente novamente.','err');
-  }
-}
-
-// ── Sucesso ────────────────────────────────────────────────────────
-function mostrarSucesso(nome, cpf){
-  document.getElementById('tela-cpf').style.display='none';
-  document.getElementById('ok-nome').textContent=nome+'!';
-  document.getElementById('tela-ok').style.display='block';
-  requestAnimationFrame(function(){
-    requestAnimationFrame(function(){
-      document.getElementById('redirect-fill').style.width='100%';
+  res.innerHTML = '<p style="font-size:12px;color:#aaa;padding:4px 0">Buscando...</p>';
+  fetch('/api/checkin/buscar-nome?q=' + encodeURIComponent(q.trim()))
+    .then(function(r){return r.json();}).then(function(d){
+      if(!d.users || !d.users.length){
+        res.innerHTML = '<p style="font-size:12px;color:#aaa;padding:4px 0">Nenhum membro encontrado com esse nome.</p>';
+        return;
+      }
+      res.innerHTML = '';
+      d.users.forEach(function(u){
+        var div = document.createElement('div');
+        div.className = 'member-card';
+        var badge = u.temCPF
+          ? '<span class="cpf-badge tem-cpf">CPF cadastrado</span>'
+          : '<span class="cpf-badge sem-cpf">Sem CPF — será cadastrado</span>';
+        div.innerHTML =
+          '<div class="member-av">' + esc(u.nome.charAt(0).toUpperCase()) + '</div>'
+          + '<div><p style="font-size:14px;font-weight:600;line-height:1.3">' + esc(u.nome) + '</p>'
+          + badge + '</div>';
+        div.addEventListener('click', function(){ selecionarMembro(u); });
+        res.appendChild(div);
+      });
+    }).catch(function(){
+      res.innerHTML = '<p style="font-size:12px;color:#a32d2d;padding:4px 0">Erro ao buscar.</p>';
     });
+}
+
+function selecionarMembro(u){
+  membroSelecionado = u;
+  CPF_MODAL = '';
+  $('cc-cpf').value = '';
+  ocultarMsg('cc-err');
+  if(u.temCPF){
+    $('cc-titulo').textContent = 'Confirmar identidade';
+    $('cc-texto').innerHTML = 'Olá, <strong>' + esc(u.nome) + '</strong>!<br>Digite seu CPF para confirmar sua identidade e fazer o check-in.';
+    $('cc-ok').textContent = 'Confirmar ✓';
+  } else {
+    $('cc-titulo').textContent = 'Cadastrar seu CPF';
+    $('cc-texto').innerHTML = 'Olá, <strong>' + esc(u.nome) + '</strong>!<br>Para confirmar sua presença, precisamos registrar seu CPF.';
+    $('cc-ok').textContent = 'Salvar e confirmar ✓';
+  }
+  $('modal-cpf').style.display = 'flex';
+  setTimeout(function(){ $('cc-cpf').focus(); }, 100);
+}
+
+function salvarCPF(){
+  ocultarMsg('cc-err');
+  var digits = CPF_MODAL;   // variável de estado, nunca o texto do campo
+  if(digits.length !== 11){
+    mostrarMsg('cc-err', 'Digite o CPF completo com 11 dígitos.', 'err');
+    return;
+  }
+  if(!membroSelecionado){ mostrarMsg('cc-err', 'Selecione seu nome na lista.', 'err'); return; }
+  var cpfFormatado = formatar(digits);
+  var btn = $('cc-ok');
+  btn.disabled = true;
+  var txtOrig = btn.textContent;
+  btn.textContent = 'Processando...';
+
+  var url, payload;
+  if(membroSelecionado.temCPF){
+    url = '/api/checkin/confirmar-por-id';
+    payload = { userId: membroSelecionado.id, cpf: cpfFormatado };
+  } else {
+    url = '/api/checkin/registrar-cpf';
+    payload = { userId: membroSelecionado.id, cpf: cpfFormatado };
+  }
+
+  fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+    .then(function(r){return r.json();}).then(function(d){
+      btn.disabled = false; btn.textContent = txtOrig;
+      if(d.error){ mostrarMsg('cc-err', d.error, 'err'); return; }
+      fecharModais();
+      sucesso(d.user.nome, d.user.cpf);
+    }).catch(function(){
+      btn.disabled = false; btn.textContent = txtOrig;
+      mostrarMsg('cc-err', 'Erro de conexão.', 'err');
+    });
+}
+
+// ============================================================================
+//  Tela de sucesso
+// ============================================================================
+function sucesso(nome, cpfFormatado){
+  $('tela-cpf').style.display = 'none';
+  $('ok-nome').textContent = nome + '!';
+  $('tela-ok').style.display = 'block';
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){ $('redirect-fill').style.width = '100%'; });
   });
-  setTimeout(function(){
-    window.location.href='/votar?cpf='+encodeURIComponent(cpf);
-  },3000);
+  setTimeout(function(){ window.location.href = '/votar?cpf=' + encodeURIComponent(cpfFormatado); }, 3000);
 }
 </script>
 </body></html>`;
 }
-
 
 function datashowPage() {
   return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
