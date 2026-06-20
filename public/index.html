@@ -592,7 +592,7 @@ var _fotoCandFile=null;
 
 function tabCandidatos(){
   var candIds=S.candidatos.map(function(c){return c.userId;});
-  var disp=S.users.filter(function(u){return candIds.indexOf(u.id)<0;});
+  var disp=S.users.filter(function(u){return candIds.indexOf(u.id)<0;}).sort(function(a,b){return a.nome.localeCompare(b.nome,'pt-BR');});
 
   // Selector de membro
   var selMembro=disp.length>0
